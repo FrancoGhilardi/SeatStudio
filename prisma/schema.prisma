@@ -1,0 +1,21 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model SeatMapDocument {
+  id            String   @id @default(cuid())
+  name          String
+  schemaVersion Int      @default(1)
+  dtoJson       String   // JSON stringify lossless (TEXT en SQLite)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  isActive      Boolean  @default(false)
+}
