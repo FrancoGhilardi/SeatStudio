@@ -29,7 +29,9 @@
       "@infrastructure/*": ["./src/infrastructure/*"],
       "@features/*": ["./src/features/*"],
       "@store/*": ["./src/store/*"],
-      "@shared/*": ["./src/shared/*"]
+      "@shared/*": ["./src/shared/*"],
+      "@prisma-client": ["./generated/prisma"],
+      "@prisma-client/*": ["./generated/prisma/*"]
     }
   },
   "include": [
