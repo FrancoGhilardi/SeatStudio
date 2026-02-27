@@ -32,6 +32,12 @@ export type AutosaveStatus = "idle" | "pending" | "saved" | "error";
 const AUTOSAVE_DEBOUNCE_MS = 1_500;
 
 /**
+ * Número máximo de entradas en la pila de historial (undo/redo).
+ * Limita el consumo de memoria para sesiones largas de edición.
+ */
+const MAX_HISTORY_SIZE = 100;
+
+/**
  * Tipos de comandos que pueden ejecutarse sin un mapa previo en el store
  * (crean o reemplazan el estado raíz del mapa).
  * Definido a nivel de módulo para no instanciar un array en cada dispatch.
@@ -66,11 +72,26 @@ export interface SelectionState {
   readonly refs: readonly EntityRef[];
 }
 
+/**
+ * Referencia a un asiento individual dentro de una fila o mesa.
+ * Se usa para el editor de override de label en el inspector.
+ */
+export interface SeatRef {
+  readonly kind: "row" | "table";
+  readonly parentId: string;
+  readonly seatIndex: number;
+}
+
 export interface EditorState {
   /** Mapa activo (dominio). */
   map: SeatMap | null;
   /** Selección actual. */
   selection: SelectionState;
+  /**
+   * Asiento seleccionado individualmente (para editar su label override).
+   * `null` si no hay asiento activo.
+   */
+  selectedSeat: SeatRef | null;
   /** Herramienta activa. */
   tool: EditorTool;
   /** Viewport (zoom + pan). */
@@ -164,6 +185,12 @@ export interface EditorActions {
 
   /** Cancela la solicitud de borrado sin eliminar nada. */
   cancelDelete(): void;
+
+  /**
+   * Selecciona un asiento individual para editar su label override.
+   * Pasa `null` para limpiar la selección de asiento.
+   */
+  selectSeat(ref: SeatRef | null): void;
 }
 
 /**
@@ -206,6 +233,7 @@ function _scheduleAutosave(
 const INITIAL_STATE: EditorState = {
   map: null,
   selection: { refs: [] },
+  selectedSeat: null,
   tool: "select",
   viewport: { zoom: 1, panX: 0, panY: 0 },
   history: { past: [], future: [] },
@@ -260,6 +288,10 @@ export const useEditorStore = create<EditorState & EditorActions>()(
               patches: [...patches],
               inversePatches: [...inversePatches],
             });
+            // Capear la pila para no crecer indefinidamente en sesiones largas.
+            if (state.history.past.length > MAX_HISTORY_SIZE) {
+              state.history.past = state.history.past.slice(-MAX_HISTORY_SIZE);
+            }
             state.history.future = [];
           }
 
@@ -268,6 +300,12 @@ export const useEditorStore = create<EditorState & EditorActions>()(
             state.selection = {
               refs: state.selection.refs.filter((r) => !deletedIds.has(r.id)),
             };
+            if (
+              state.selectedSeat !== null &&
+              deletedIds.has(state.selectedSeat.parentId)
+            ) {
+              state.selectedSeat = null;
+            }
           }
         }
 
@@ -327,6 +365,9 @@ export const useEditorStore = create<EditorState & EditorActions>()(
           patches: [...entry.patches],
           inversePatches: [...entry.inversePatches],
         });
+        if (state.history.past.length > MAX_HISTORY_SIZE) {
+          state.history.past = state.history.past.slice(-MAX_HISTORY_SIZE);
+        }
         state.selection = { refs: [] };
         state.autosaveStatus = "pending";
       });
@@ -346,6 +387,7 @@ export const useEditorStore = create<EditorState & EditorActions>()(
       set((state) => {
         state.map = map as unknown as typeof state.map;
         state.selection = { refs: [] };
+        state.selectedSeat = null;
         state.history = { past: [], future: [] };
         state.autosaveStatus = "idle";
         state.deleteRequested = false;
@@ -367,6 +409,7 @@ export const useEditorStore = create<EditorState & EditorActions>()(
     setSelection(refs) {
       set((state) => {
         state.selection = { refs: refs as typeof state.selection.refs };
+        state.selectedSeat = null;
       });
     },
 
@@ -399,12 +442,14 @@ export const useEditorStore = create<EditorState & EditorActions>()(
     resetSelection() {
       set((state) => {
         state.selection = { refs: [] };
+        state.selectedSeat = null;
       });
     },
 
     clearSelection() {
       set((state) => {
         state.selection = { refs: [] };
+        state.selectedSeat = null;
       });
     },
 
@@ -456,6 +501,12 @@ export const useEditorStore = create<EditorState & EditorActions>()(
     cancelDelete() {
       set((state) => {
         state.deleteRequested = false;
+      });
+    },
+
+    selectSeat(ref) {
+      set((state) => {
+        state.selectedSeat = ref as typeof state.selectedSeat;
       });
     },
   })),

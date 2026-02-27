@@ -12,6 +12,7 @@ import type {
   EditorTool,
   AutosaveStatus,
   Viewport,
+  SeatRef,
 } from "@store/editor.store";
 
 type S = EditorState & EditorActions;
@@ -174,3 +175,6 @@ export const selectStageSize = (s: S): { width: number; height: number } =>
 
 /** Nombre del mapa activo o cadena vacía si no hay mapa. */
 export const selectMapName = (s: S): string => s.map?.meta.name ?? "";
+
+/** Asiento seleccionado individualmente, o `null`. */
+export const selectSelectedSeat = (s: S): SeatRef | null => s.selectedSeat;

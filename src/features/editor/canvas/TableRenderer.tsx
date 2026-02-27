@@ -22,6 +22,10 @@ interface TableRendererProps {
   selected?: boolean;
   /** Callback invocado cuando el usuario hace clic sobre la mesa. */
   onClick?: (e: KonvaEventObject<MouseEvent>) => void;
+  /** Índice 0-based del asiento seleccionado individualmente (opcional). */
+  selectedSeatIndex?: number | null;
+  /** Callback invocado cuando el usuario hace clic sobre un asiento perimetral. */
+  onSeatClick?: (index: number, e: KonvaEventObject<MouseEvent>) => void;
 }
 
 /**
@@ -34,6 +38,8 @@ export const TableRenderer = memo(function TableRenderer({
   table,
   selected = false,
   onClick,
+  selectedSeatIndex = null,
+  onSeatClick,
 }: TableRendererProps) {
   const tableFill = selected ? "#312e81" : TABLE_FILL; // indigo-950 si seleccionado
   const tableStroke = selected ? "#818cf8" : TABLE_STROKE; // indigo-400
@@ -78,13 +84,28 @@ export const TableRenderer = memo(function TableRenderer({
         // pos está en coordenadas mundo; restamos el center porque el Group ya lo aplica
         const lx = pos.x - table.center.x;
         const ly = pos.y - table.center.y;
+        const isSeatSelected = selectedSeatIndex === i;
+        const fill = isSeatSelected ? "#f59e0b" : seatFill; // amber-400 si asiento activo
+        const stroke = isSeatSelected ? "#fbbf24" : seatStroke;
         return (
-          <Group key={i} x={lx} y={ly}>
+          <Group
+            key={i}
+            x={lx}
+            y={ly}
+            {...(onSeatClick
+              ? {
+                  onClick: (e: KonvaEventObject<MouseEvent>) => {
+                    e.cancelBubble = true;
+                    onSeatClick(i, e);
+                  },
+                }
+              : {})}
+          >
             <Circle
               radius={table.seatRadius}
-              fill={seatFill}
-              stroke={seatStroke}
-              strokeWidth={1}
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={isSeatSelected ? 2 : 1}
               perfectDrawEnabled={false}
             />
             <Text

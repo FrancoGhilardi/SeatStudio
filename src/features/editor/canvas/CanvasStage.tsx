@@ -13,6 +13,7 @@ import {
   selectSelectionRefs,
   selectTool,
   selectViewport,
+  selectSelectedSeat,
 } from "@store/selectors";
 import type { EntityRef, EntityKind } from "@domain/model/seatmap";
 import {
@@ -212,6 +213,8 @@ export function CanvasStage() {
   const removeFromSelection = useEditorStore((s) => s.removeFromSelection);
   const clearSelection = useEditorStore((s) => s.clearSelection);
   const storeSetTool = useEditorStore((s) => s.setTool);
+  const selectedSeat = useEditorStore(selectSelectedSeat);
+  const storeSeatSelect = useEditorStore((s) => s.selectSeat);
 
   // ── estado de dibujo (transitorio, no es dominio) ──
   const [drawingState, setDrawingState] = useState<DrawingState>({
@@ -646,28 +649,70 @@ export function CanvasStage() {
               ))}
 
               {/* Filas */}
-              {rows.map((row) => (
-                <RowRenderer
-                  key={row.id}
-                  row={row}
-                  selected={selectedRowIds.has(row.id)}
-                  onClick={(e) =>
-                    handleEntityClick({ kind: "row", id: row.id }, e)
-                  }
-                />
-              ))}
+              {rows.map((row) => {
+                const rowIsSelected = selectedRowIds.has(row.id);
+                const rowSeatIdx =
+                  selectedSeat?.kind === "row" &&
+                  selectedSeat.parentId === row.id
+                    ? selectedSeat.seatIndex
+                    : null;
+                return (
+                  <RowRenderer
+                    key={row.id}
+                    row={row}
+                    selected={rowIsSelected}
+                    onClick={(e) =>
+                      handleEntityClick({ kind: "row", id: row.id }, e)
+                    }
+                    {...(rowSeatIdx !== null
+                      ? { selectedSeatIndex: rowSeatIdx }
+                      : {})}
+                    {...(tool === "select" && rowIsSelected
+                      ? {
+                          onSeatClick: (index: number) =>
+                            storeSeatSelect({
+                              kind: "row",
+                              parentId: row.id,
+                              seatIndex: index,
+                            }),
+                        }
+                      : {})}
+                  />
+                );
+              })}
 
               {/* Mesas */}
-              {tables.map((table) => (
-                <TableRenderer
-                  key={table.id}
-                  table={table}
-                  selected={selectedTableIds.has(table.id)}
-                  onClick={(e) =>
-                    handleEntityClick({ kind: "table", id: table.id }, e)
-                  }
-                />
-              ))}
+              {tables.map((table) => {
+                const tableIsSelected = selectedTableIds.has(table.id);
+                const tableSeatIdx =
+                  selectedSeat?.kind === "table" &&
+                  selectedSeat.parentId === table.id
+                    ? selectedSeat.seatIndex
+                    : null;
+                return (
+                  <TableRenderer
+                    key={table.id}
+                    table={table}
+                    selected={tableIsSelected}
+                    onClick={(e) =>
+                      handleEntityClick({ kind: "table", id: table.id }, e)
+                    }
+                    {...(tableSeatIdx !== null
+                      ? { selectedSeatIndex: tableSeatIdx }
+                      : {})}
+                    {...(tool === "select" && tableIsSelected
+                      ? {
+                          onSeatClick: (index: number) =>
+                            storeSeatSelect({
+                              kind: "table",
+                              parentId: table.id,
+                              seatIndex: index,
+                            }),
+                        }
+                      : {})}
+                  />
+                );
+              })}
             </Group>
           </Layer>
 

@@ -23,6 +23,10 @@ interface RowRendererProps {
   selected?: boolean;
   /** Callback invocado cuando el usuario hace clic sobre la fila. */
   onClick?: (e: KonvaEventObject<MouseEvent>) => void;
+  /** Índice 0-based del asiento seleccionado individualmente (óptimo). */
+  selectedSeatIndex?: number | null;
+  /** Callback invocado cuando el usuario hace clic sobre un asiento. */
+  onSeatClick?: (index: number, e: KonvaEventObject<MouseEvent>) => void;
 }
 
 /**
@@ -35,6 +39,8 @@ export const RowRenderer = memo(function RowRenderer({
   row,
   selected = false,
   onClick,
+  selectedSeatIndex = null,
+  onSeatClick,
 }: RowRendererProps) {
   const seatFill = selected ? "#4f46e5" : SEAT_FILL; // indigo-600 si seleccionado
   const seatStroke = selected ? "#818cf8" : SEAT_STROKE; // indigo-400
@@ -74,13 +80,28 @@ export const RowRenderer = memo(function RowRenderer({
       {Array.from({ length: row.seatCount }, (_, i) => {
         const pos = getRowSeatPosition(row, i);
         const label = getRowSeatLabel(row, i);
+        const isSeatSelected = selectedSeatIndex === i;
+        const fill = isSeatSelected ? "#f59e0b" : seatFill; // amber-400 si asiento activo
+        const stroke = isSeatSelected ? "#fbbf24" : seatStroke;
         return (
-          <Group key={i} x={pos.x} y={pos.y}>
+          <Group
+            key={i}
+            x={pos.x}
+            y={pos.y}
+            {...(onSeatClick
+              ? {
+                  onClick: (e: KonvaEventObject<MouseEvent>) => {
+                    e.cancelBubble = true;
+                    onSeatClick(i, e);
+                  },
+                }
+              : {})}
+          >
             <Circle
               radius={row.seatRadius}
-              fill={seatFill}
-              stroke={seatStroke}
-              strokeWidth={1}
+              fill={fill}
+              stroke={stroke}
+              strokeWidth={isSeatSelected ? 2 : 1}
               perfectDrawEnabled={false}
             />
             <Text

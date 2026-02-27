@@ -86,6 +86,16 @@ export function executeCommand(
       return handleApplyLabelRule(cmd, map);
     case "DELETE_ENTITIES":
       return handleDeleteEntities(cmd, map);
+    default: {
+      // Exhaustiveness check: si se añade un nuevo comando al union EditorCommand
+      // sin implementar su handler aquí, TypeScript fallará en compilación.
+      const _exhaustive: never = cmd;
+      void _exhaustive;
+      return failOne({
+        code: "UNKNOWN_COMMAND",
+        message: "Comando no reconocido.",
+      });
+    }
   }
 }
 
