@@ -19,6 +19,13 @@
   }
 }
 
+/* El editor ocupa exactamente el viewport — sin scroll de página */
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);

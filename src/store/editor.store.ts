@@ -7,6 +7,7 @@ import type { EditorCommand } from "@application/commands/types";
 import { executeCommand } from "@application/commands/execute";
 import type { DomainError } from "@domain/services/errors";
 import { exportMap } from "@application/usecases/io";
+import { API_ROUTES } from "@shared/index";
 
 /**
  * Herramienta activa en el canvas.
@@ -165,7 +166,7 @@ function _scheduleAutosave(
       return;
     }
 
-    void fetch("/api/seatmap/active", {
+    void fetch(API_ROUTES.seatmapActive, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: result.value.json,
@@ -174,8 +175,6 @@ function _scheduleAutosave(
       .catch(() => onStatus("error"));
   }, AUTOSAVE_DEBOUNCE_MS);
 }
-
-// ─── Estado inicial ───────────────────────────────────────────────────────────
 
 const INITIAL_STATE: EditorState = {
   map: null,

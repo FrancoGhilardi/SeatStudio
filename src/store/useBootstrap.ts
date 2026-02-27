@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { importMap } from "@application/usecases/io";
 import { useEditorStore } from "@store/editor.store";
+import { API_ROUTES } from "@shared/index";
 
 export type BootstrapStatus = "loading" | "ready" | "error";
 
@@ -31,10 +32,10 @@ export function useBootstrap(): BootstrapState {
 
       try {
         // ── Paso 1: intentar cargar el mapa activo ────────────────────────────
-        const activeRes = await fetch("/api/seatmap/active");
+        const activeRes = await fetch(API_ROUTES.seatmapActive);
         if (!activeRes.ok) {
           throw new Error(
-            `GET /api/seatmap/active respondió ${activeRes.status.toString()}`,
+            `GET ${API_ROUTES.seatmapActive} respondió ${activeRes.status.toString()}`,
           );
         }
 
@@ -54,10 +55,10 @@ export function useBootstrap(): BootstrapState {
         }
 
         // ── Paso 2: no hay mapa activo → crear uno vacío ──────────────────────
-        const newRes = await fetch("/api/seatmap/new", { method: "POST" });
+        const newRes = await fetch(API_ROUTES.seatmapNew, { method: "POST" });
         if (!newRes.ok) {
           throw new Error(
-            `POST /api/seatmap/new respondió ${newRes.status.toString()}`,
+            `POST ${API_ROUTES.seatmapNew} respondió ${newRes.status.toString()}`,
           );
         }
 
