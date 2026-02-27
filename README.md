@@ -183,20 +183,24 @@ npm install -g pnpm
 git clone <url-del-repo>
 cd seatstudio
 
-# 2. Instalar dependencias
-pnpm install
+# 2. Configurar variables de entorno
+cp .env.example .env
+# El valor por defecto (SQLite local) no requiere ningún cambio adicional
 
-# 3. Aplicar migraciones de base de datos
-#    Esto crea el archivo seatstudio.db en la raíz del proyecto
+# 3. Instalar dependencias
+pnpm install
+# También funciona con npm: npm install
+
+# 4. Aplicar migraciones de base de datos
+#    Crea el archivo dev.db en la raíz del proyecto
 pnpm db:migrate
 
-# 4. Levantar el servidor de desarrollo
+# 5. Levantar el servidor de desarrollo
 pnpm dev
+# También funciona con npm: npm run dev
 ```
 
 Abrir [http://localhost:3000](http://localhost:3000) en el navegador.
-
-> **Nota**: no es necesaria ninguna variable de entorno. La base de datos SQLite se crea automáticamente en la raíz del proyecto con `pnpm db:migrate`.
 
 ### Scripts disponibles
 
