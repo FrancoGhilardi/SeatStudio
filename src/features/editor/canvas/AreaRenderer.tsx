@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Group, Line, Text } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Area } from "@domain/model/seatmap";
@@ -12,6 +12,8 @@ const AREA_CAPACITY_COLOR = "#a1a1aa"; // zinc-400
 
 const AREA_FILL_SELECTED = "rgba(99, 102, 241, 0.28)";
 const AREA_STROKE_SELECTED = "#818cf8";
+const AREA_FILL_HOVER = "rgba(99, 102, 241, 0.20)";
+const AREA_STROKE_HOVER = "#818cf8";
 
 const LABEL_FONT_SIZE = 13;
 const CAPACITY_FONT_SIZE = 11;
@@ -54,13 +56,28 @@ export const AreaRenderer = memo(function AreaRenderer({
   selected = false,
   onClick,
 }: AreaRendererProps) {
-  const fill = selected ? AREA_FILL_SELECTED : AREA_FILL;
-  const stroke = selected ? AREA_STROKE_SELECTED : AREA_STROKE;
+  const [hovered, setHovered] = useState(false);
+
+  // Prioridad: seleccionado > hover > normal
+  const fill = selected
+    ? AREA_FILL_SELECTED
+    : hovered
+      ? AREA_FILL_HOVER
+      : AREA_FILL;
+  const stroke = selected
+    ? AREA_STROKE_SELECTED
+    : hovered
+      ? AREA_STROKE_HOVER
+      : AREA_STROKE;
   const flat = toFlat(area.points);
   const center = centroid(area.points);
 
   return (
-    <Group {...(onClick !== undefined ? { onClick } : {})}>
+    <Group
+      {...(onClick !== undefined ? { onClick } : {})}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {/* Polígono — zona de hit + visual */}
       <Line
         points={flat}

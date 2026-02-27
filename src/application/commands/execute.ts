@@ -5,6 +5,11 @@ import { ENTITY_COLLECTION } from "@domain/model/seatmap";
 import { createEmptyMap } from "@domain/services/seatMapFactory";
 import { importMap } from "@application/usecases/io";
 import { fail, failOne, ok, type Result } from "@domain/services/errors";
+import {
+  isValidLabelingTemplate,
+  isValidLabelingStartIndex,
+  isValidLabelingPad,
+} from "@domain/services/labeling";
 import type {
   ApplyLabelRuleCommand,
   BatchApplyLabelRuleCommand,
@@ -136,21 +141,21 @@ function validateLabelingRuleCmd(
   pad: number,
   pathPrefix: string,
 ): Result<never> | null {
-  if (template.trim() === "") {
+  if (!isValidLabelingTemplate(template)) {
     return failOne<never>({
       code: "CMD_LABELING_TEMPLATE_EMPTY",
       message: "El template de etiquetado no puede estar vacío.",
       path: `${pathPrefix}.template`,
     });
   }
-  if (!Number.isInteger(startIndex) || startIndex < 1) {
+  if (!isValidLabelingStartIndex(startIndex)) {
     return failOne<never>({
       code: "CMD_LABELING_START_INDEX_INVALID",
       message: "startIndex debe ser un entero >= 1.",
       path: `${pathPrefix}.startIndex`,
     });
   }
-  if (!Number.isInteger(pad) || pad < 0 || pad > 8) {
+  if (!isValidLabelingPad(pad)) {
     return failOne<never>({
       code: "CMD_LABELING_PAD_INVALID",
       message: "pad debe ser un entero en el rango [0, 8].",

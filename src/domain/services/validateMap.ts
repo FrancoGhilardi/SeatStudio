@@ -1,5 +1,11 @@
 import type { Area, Row, SeatMap, Table } from "@domain/model";
-import { getRowSeatLabel, getTableSeatLabel } from "@domain/services/labeling";
+import {
+  getRowSeatLabel,
+  getTableSeatLabel,
+  isValidLabelingTemplate,
+  isValidLabelingStartIndex,
+  isValidLabelingPad,
+} from "@domain/services/labeling";
 import {
   type DomainError,
   type Result,
@@ -22,21 +28,21 @@ function validateLabelingRule(
 ): DomainError[] {
   const errors: DomainError[] = [];
 
-  if (template.trim() === "") {
+  if (!isValidLabelingTemplate(template)) {
     errors.push({
       code: `${codePrefix}_LABELING_TEMPLATE_EMPTY`,
       message: "El template de etiquetado no puede estar vacío.",
       path: pathFn("labeling.template"),
     });
   }
-  if (!Number.isInteger(startIndex) || startIndex < 1) {
+  if (!isValidLabelingStartIndex(startIndex)) {
     errors.push({
       code: `${codePrefix}_LABELING_START_INDEX_INVALID`,
       message: "startIndex debe ser un entero >= 1.",
       path: pathFn("labeling.startIndex"),
     });
   }
-  if (!Number.isInteger(pad) || pad < 0 || pad > 8) {
+  if (!isValidLabelingPad(pad)) {
     errors.push({
       code: `${codePrefix}_LABELING_PAD_INVALID`,
       message: "pad debe ser un entero en el rango [0, 8].",

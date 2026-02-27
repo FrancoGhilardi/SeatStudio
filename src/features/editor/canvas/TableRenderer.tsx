@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Circle, Group, Text } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Table } from "@domain/model/seatmap";
@@ -9,6 +9,8 @@ import { getTableSeatLabel } from "@domain/services/labeling";
 
 const TABLE_FILL = "#27272a"; // zinc-800
 const TABLE_STROKE = "#71717a"; // zinc-500
+const TABLE_FILL_HOVER = "#3f3f46"; // zinc-700 — hover sin seleccionar
+const TABLE_STROKE_HOVER = "#a1a1aa"; // zinc-400
 const SEAT_FILL = "#3f3f46"; // zinc-700
 const SEAT_STROKE = "#71717a"; // zinc-500
 const SEAT_LABEL_COLOR = "#d4d4d8"; // zinc-300
@@ -41,8 +43,19 @@ export const TableRenderer = memo(function TableRenderer({
   selectedSeatIndex = null,
   onSeatClick,
 }: TableRendererProps) {
-  const tableFill = selected ? "#312e81" : TABLE_FILL; // indigo-950 si seleccionado
-  const tableStroke = selected ? "#818cf8" : TABLE_STROKE; // indigo-400
+  const [hovered, setHovered] = useState(false);
+
+  // Prioridad: seleccionado > hover > normal
+  const tableFill = selected
+    ? "#312e81" // indigo-950
+    : hovered
+      ? TABLE_FILL_HOVER
+      : TABLE_FILL;
+  const tableStroke = selected
+    ? "#818cf8" // indigo-400
+    : hovered
+      ? TABLE_STROKE_HOVER
+      : TABLE_STROKE;
   const seatFill = selected ? "#4f46e5" : SEAT_FILL;
   const seatStroke = selected ? "#818cf8" : SEAT_STROKE;
 
@@ -51,6 +64,8 @@ export const TableRenderer = memo(function TableRenderer({
       x={table.center.x}
       y={table.center.y}
       {...(onClick !== undefined ? { onClick } : {})}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
     >
       {/* Disco de la mesa — actúa como zona de hit */}
       <Circle

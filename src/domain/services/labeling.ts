@@ -11,6 +11,30 @@ export interface LabelVars {
   readonly n: number;
 }
 
+/**
+ * `true` si el template de una LabelingRule es estructuralmente válido.
+ * Regla: no puede ser una cadena vacía o de sólo espacios.
+ */
+export function isValidLabelingTemplate(template: string): boolean {
+  return template.trim() !== "";
+}
+
+/**
+ * `true` si `startIndex` es válido.
+ * Regla: debe ser un entero >= 1.
+ */
+export function isValidLabelingStartIndex(startIndex: number): boolean {
+  return Number.isInteger(startIndex) && startIndex >= 1;
+}
+
+/**
+ * `true` si `pad` es válido.
+ * Regla: debe ser un entero en el rango [0, 8].
+ */
+export function isValidLabelingPad(pad: number): boolean {
+  return Number.isInteger(pad) && pad >= 0 && pad <= 8;
+}
+
 // Formateo de label a partir de una regla
 
 /**

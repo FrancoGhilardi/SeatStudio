@@ -22,7 +22,12 @@ import type { DrawingState } from "@features/editor/tools";
 import { RowRenderer } from "./RowRenderer";
 import { TableRenderer } from "./TableRenderer";
 import { AreaRenderer } from "./AreaRenderer";
-import { DEFAULT_GRID_SIZE, GRID_COLOR, DRAG_THRESHOLD } from "./constants";
+import {
+  DEFAULT_GRID_SIZE,
+  GRID_COLOR,
+  DRAG_THRESHOLD,
+  snapToGrid,
+} from "./constants";
 import {
   useStageResize,
   useSpaceKey,
@@ -266,11 +271,13 @@ export function CanvasStage() {
     if (!stage) return { x: 0, y: 0 };
     const pointer = stage.getPointerPosition();
     if (!pointer) return { x: 0, y: 0 };
-    return {
+    const raw = {
       x: (pointer.x - viewport.panX) / viewport.zoom,
       y: (pointer.y - viewport.panY) / viewport.zoom,
     };
-  }, [viewport.panX, viewport.panY, viewport.zoom]);
+    // Snap a grilla cuando se está usando un tool de creación
+    return tool !== "select" ? snapToGrid(raw, gridSize) : raw;
+  }, [viewport.panX, viewport.panY, viewport.zoom, tool, gridSize]);
 
   // ── constructor de ToolContext ──
   const buildToolContext = useCallback(
@@ -330,16 +337,26 @@ export function CanvasStage() {
       if (stage) {
         const pointer = stage.getPointerPosition();
         if (pointer) {
-          setPreviewPos({
+          const raw = {
             x: (pointer.x - viewport.panX) / viewport.zoom,
             y: (pointer.y - viewport.panY) / viewport.zoom,
-          });
+          };
+          // Snap a grilla para preview de herramientas de creación
+          setPreviewPos(tool !== "select" ? snapToGrid(raw, gridSize) : raw);
         }
       }
       panMove(e);
       marqMove(e);
     },
-    [panMove, marqMove, viewport.panX, viewport.panY, viewport.zoom],
+    [
+      panMove,
+      marqMove,
+      viewport.panX,
+      viewport.panY,
+      viewport.zoom,
+      tool,
+      gridSize,
+    ],
   );
 
   const handleBgMouseUp = useCallback(() => {

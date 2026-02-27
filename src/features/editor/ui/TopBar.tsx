@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { useEditorStore } from "@store/editor.store";
 import {
   selectCanUndo,
@@ -11,6 +11,7 @@ import {
 } from "@store/selectors";
 import { importMap, exportMap } from "@application/usecases/io";
 import { ConfirmDialog } from "@features/editor/ui/ConfirmDialog";
+import { ImportDialog } from "@features/editor/ui/ImportDialog";
 import { useToast } from "@features/editor/ui/Toast";
 import { API_ROUTES } from "@shared/index";
 import type { AutosaveStatus } from "@store/editor.store";
@@ -213,8 +214,8 @@ function IconFit() {
 }
 
 export function TopBar() {
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [newMapDialogOpen, setNewMapDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const { toast } = useToast();
 
@@ -254,46 +255,57 @@ export function TopBar() {
   }
 
   function handleImportClick() {
-    fileInputRef.current?.click();
+    setImportDialogOpen(true);
   }
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    try {
-      const text = await file.text();
-      const raw: unknown = JSON.parse(text);
-
-      // IMPORT_MAP valida con Zod internamente; dispatch retorna los errores.
-      const errors = dispatch({ type: "IMPORT_MAP", payload: { json: raw } });
-      if (errors.length > 0) {
-        toast(
-          `Import fallido: ${errors.map((er) => er.message).join(" · ")}`,
-          "error",
-        );
-        return;
-      }
-
-      // Persistencia inmediata: flush explícito al repo sin esperar el debounce
-      // del autosave. Garantiza que si el usuario cierra la pestaña antes de
-      // que el timer de 1.5s expire, el mapa importado ya quedó guardado en DB.
-      const saveRes = await fetch(API_ROUTES.seatmapActive, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: text,
-      });
-      if (!saveRes.ok) {
-        toast("Mapa importado pero no persistido (error al guardar)", "error");
-        return;
-      }
-
-      toast("Mapa importado correctamente", "success");
-    } catch (err) {
-      toast(`No se pudo importar: ${String(err)}`, "error");
-    } finally {
-      e.target.value = "";
+  /**
+   * Callback para ImportDialog.
+   * Recibe el JSON crudo (string), lo importa vía IMPORT_MAP y persiste
+   * inmediatamente (flush antes del debounce de autosave).
+   * Lanza si el import falla para que el dialog permanezca abierto.
+   */
+  async function handleImport(rawJson: string): Promise<void> {
+    // IMPORT_MAP valida con Zod + invariantes internamente.
+    const errors = dispatch({ type: "IMPORT_MAP", payload: { json: rawJson } });
+    if (errors.length > 0) {
+      toast(
+        `Import fallido: ${errors.map((e) => e.message).join(" · ")}`,
+        "error",
+      );
+      // No lanzar: dejamos el dialog abierto para que el usuario corrija.
+      return;
     }
+
+    // Flush inmediato al repo con el DTO limpio (ya migrado/validado),
+    // sin esperar los 1.5 s del debounce de autosave.
+    const currentMap = useEditorStore.getState().map;
+    if (currentMap) {
+      const exportResult = exportMap(currentMap);
+      if (exportResult.ok) {
+        try {
+          const saveRes = await fetch(API_ROUTES.seatmapActive, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: exportResult.value.json,
+          });
+          if (!saveRes.ok) {
+            // No es fatal: el autosave debounced lo reintentará.
+            toast(
+              "Mapa importado, pero el guardado automático reintentará la persistencia.",
+              "error",
+            );
+          }
+        } catch {
+          toast(
+            "Mapa importado, pero no se pudo contactar al servidor.",
+            "error",
+          );
+        }
+      }
+    }
+
+    toast("Mapa importado correctamente", "success");
+    setImportDialogOpen(false);
   }
 
   function handleExport() {
@@ -352,13 +364,6 @@ export function TopBar() {
           <IconImport />
           <span>Importar</span>
         </ToolbarButton>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          className="hidden"
-          onChange={handleFileChange}
-        />
 
         <ToolbarButton
           onClick={handleExport}
@@ -422,6 +427,13 @@ export function TopBar() {
           </span>
         )}
       </header>
+
+      {/* Diálogo de importación */}
+      <ImportDialog
+        open={importDialogOpen}
+        onImport={handleImport}
+        onCancel={() => setImportDialogOpen(false)}
+      />
 
       {/* Diálogo confirmación "Nuevo mapa" */}
       <ConfirmDialog

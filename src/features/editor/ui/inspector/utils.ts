@@ -1,4 +1,9 @@
 import { formatLabel } from "@domain/services/labeling";
+import {
+  isValidLabelingTemplate,
+  isValidLabelingStartIndex,
+  isValidLabelingPad,
+} from "@domain/services/labeling";
 import type { LabelingRule } from "@domain/model/seatmap";
 
 /**
@@ -30,13 +35,15 @@ export function validateLabelRuleInputs(
 ): Record<string, string> {
   const errs: Record<string, string> = {};
 
-  if (!template.trim()) errs["template"] = "No puede estar vacío";
+  if (!isValidLabelingTemplate(template))
+    errs["template"] = "No puede estar vacío";
 
   const si = parseInt(startIndexStr, 10);
-  if (isNaN(si) || si < 1) errs["start"] = "Debe ser ≥ 1";
+  if (isNaN(si) || !isValidLabelingStartIndex(si))
+    errs["start"] = "Debe ser ≥ 1";
 
   const p = parseInt(padStr, 10);
-  if (isNaN(p) || p < 0 || p > 8) errs["pad"] = "Entre 0 y 8";
+  if (isNaN(p) || !isValidLabelingPad(p)) errs["pad"] = "Entre 0 y 8";
 
   return errs;
 }

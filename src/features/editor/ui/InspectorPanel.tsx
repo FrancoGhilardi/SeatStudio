@@ -1,11 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
 import { useEditorStore } from "@store/editor.store";
 import {
-  selectSelectionRefs,
   selectMap,
   selectHasSelection,
+  selectSelectionCount,
 } from "@store/selectors";
 import type { Row, Table, Area } from "@domain/model/seatmap";
 import {
@@ -21,47 +20,39 @@ import {
 /**
  * Panel de propiedades derecho.
  *
- * SRP: este componente es exclusivamente un enrutador de selección → sub-inspector.
+ * SRP: exclusivamente un enrutador de selección → sub-inspector.
  * Toda la lógica de edición vive en inspector/ (sub-componentes).
  */
 export function InspectorPanel() {
   const map = useEditorStore(selectMap);
-  const selected = useEditorStore(selectSelectionRefs);
   const hasSelection = useEditorStore(selectHasSelection);
+  const totalSelected = useEditorStore(selectSelectionCount);
   const requestDelete = useEditorStore((s) => s.requestDelete);
 
-  // Resuelve referencias de selección a entidades de dominio concretas.
-  const { rows, tables, areas } = useMemo(() => {
-    if (!map || selected.length === 0)
-      return { rows: [] as Row[], tables: [] as Table[], areas: [] as Area[] };
+  // Selectores individuales por tipo: devuelven la referencia de la entidad
+  // tal cual vive en el store (Immer garantiza estabilidad si no cambió),
+  // o null. Object.is estable → no hay bucle infinito en useSyncExternalStore.
+  const singleRow = useEditorStore((s): Row | null => {
+    if (s.selection.refs.length !== 1) return null;
+    const ref = s.selection.refs[0];
+    if (!ref || ref.kind !== "row") return null;
+    return s.map?.entities.rows[ref.id] ?? null;
+  });
 
-    const rows: Row[] = [];
-    const tables: Table[] = [];
-    const areas: Area[] = [];
+  const singleTable = useEditorStore((s): Table | null => {
+    if (s.selection.refs.length !== 1) return null;
+    const ref = s.selection.refs[0];
+    if (!ref || ref.kind !== "table") return null;
+    return s.map?.entities.tables[ref.id] ?? null;
+  });
 
-    for (const ref of selected) {
-      if (ref.kind === "row") {
-        const r = map.entities.rows[ref.id];
-        if (r) rows.push(r);
-      } else if (ref.kind === "table") {
-        const t = map.entities.tables[ref.id];
-        if (t) tables.push(t);
-      } else if (ref.kind === "area") {
-        const a = map.entities.areas[ref.id];
-        if (a) areas.push(a);
-      }
-    }
+  const singleArea = useEditorStore((s): Area | null => {
+    if (s.selection.refs.length !== 1) return null;
+    const ref = s.selection.refs[0];
+    if (!ref || ref.kind !== "area") return null;
+    return s.map?.entities.areas[ref.id] ?? null;
+  });
 
-    return { rows, tables, areas };
-  }, [map, selected]);
-
-  const totalSelected = selected.length;
-  const isSingle = totalSelected === 1;
-
-  const singleRow = isSingle && rows.length === 1 ? (rows[0] ?? null) : null;
-  const singleTable =
-    isSingle && tables.length === 1 ? (tables[0] ?? null) : null;
-  const singleArea = isSingle && areas.length === 1 ? (areas[0] ?? null) : null;
   const isMulti = totalSelected > 1;
 
   return (

@@ -19,3 +19,19 @@ export const ZOOM_SENSITIVITY = 1.08;
  * Por debajo de este valor se trata como un clic puntual.
  */
 export const DRAG_THRESHOLD = 5;
+
+/**
+ * Ajusta un punto al nodo de grilla más cercano.
+ *
+ * @param pos      Posición en coordenadas mundo.
+ * @param gridSize Tamaño de celda (debe ser > 0).
+ */
+export function snapToGrid(
+  pos: { x: number; y: number },
+  gridSize: number,
+): { x: number; y: number } {
+  return {
+    x: Math.round(pos.x / gridSize) * gridSize,
+    y: Math.round(pos.y / gridSize) * gridSize,
+  };
+}

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, useState } from "react";
 import { Circle, Group, Line, Text } from "react-konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import type { Row } from "@domain/model/seatmap";
@@ -10,6 +10,8 @@ import { midpoint } from "@domain/services/geometry";
 
 const SEAT_FILL = "#3f3f46"; // zinc-700
 const SEAT_STROKE = "#71717a"; // zinc-500
+const SEAT_FILL_HOVER = "#52525b"; // zinc-600 — hover sin seleccionar
+const SEAT_STROKE_HOVER = "#a1a1aa"; // zinc-400
 const SEAT_LABEL_COLOR = "#d4d4d8"; // zinc-300
 const ROW_LINE_COLOR = "#52525b"; // zinc-600
 const ROW_LABEL_COLOR = "#a1a1aa"; // zinc-400
@@ -42,8 +44,19 @@ export const RowRenderer = memo(function RowRenderer({
   selectedSeatIndex = null,
   onSeatClick,
 }: RowRendererProps) {
-  const seatFill = selected ? "#4f46e5" : SEAT_FILL; // indigo-600 si seleccionado
-  const seatStroke = selected ? "#818cf8" : SEAT_STROKE; // indigo-400
+  const [hovered, setHovered] = useState(false);
+
+  // Prioridad: seleccionado > hover > normal
+  const seatFill = selected
+    ? "#4f46e5" // indigo-600
+    : hovered
+      ? SEAT_FILL_HOVER
+      : SEAT_FILL;
+  const seatStroke = selected
+    ? "#818cf8" // indigo-400
+    : hovered
+      ? SEAT_STROKE_HOVER
+      : SEAT_STROKE;
 
   const mid = midpoint(row.start, row.end);
 
@@ -56,7 +69,11 @@ export const RowRenderer = memo(function RowRenderer({
   const labelOffset = row.seatRadius + 10;
 
   return (
-    <Group {...(onClick !== undefined ? { onClick } : {})}>
+    <Group
+      {...(onClick !== undefined ? { onClick } : {})}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       {/* Línea de la fila (visible, sin eventos) */}
       <Line
         points={[row.start.x, row.start.y, row.end.x, row.end.y]}
