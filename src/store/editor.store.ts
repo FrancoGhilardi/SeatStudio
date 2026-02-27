@@ -7,6 +7,7 @@ import type { EditorCommand } from "@application/commands/types";
 import { executeCommand } from "@application/commands/execute";
 import type { DomainError } from "@domain/services/errors";
 import { exportMap } from "@application/usecases/io";
+import { computeEntitiesBBox } from "@domain/services/geometry";
 import { API_ROUTES } from "@shared/index";
 
 /**
@@ -83,6 +84,12 @@ export interface EditorState {
   autosaveStatus: AutosaveStatus;
   /** Dimensiones de la Stage de Konva en pantalla (actualizadas por CanvasStage). */
   stageSize: { width: number; height: number };
+  /**
+   * `true` cuando hay una solicitud de borrado pendiente de confirmación.
+   * El diálogo de confirmación se muestra en EditorLayout y es la única fuente
+   * de verdad; tanto el botón del inspector como el atajo de teclado lo activan.
+   */
+  deleteRequested: boolean;
 }
 
 export interface EditorActions {
@@ -148,6 +155,15 @@ export interface EditorActions {
    * Si el mapa está vacío o la Stage tiene tamaño cero, resetea al 100% centrado.
    */
   fitViewport(): void;
+
+  /**
+   * Solicita confirmación de borrado de la selección actual.
+   * Solo activa el flag si hay al menos una entidad seleccionada.
+   */
+  requestDelete(): void;
+
+  /** Cancela la solicitud de borrado sin eliminar nada. */
+  cancelDelete(): void;
 }
 
 /**
@@ -195,6 +211,7 @@ const INITIAL_STATE: EditorState = {
   history: { past: [], future: [] },
   autosaveStatus: "idle",
   stageSize: { width: 0, height: 0 },
+  deleteRequested: false,
 };
 
 export const useEditorStore = create<EditorState & EditorActions>()(
@@ -235,6 +252,7 @@ export const useEditorStore = create<EditorState & EditorActions>()(
           state.selection = { refs: [] };
           state.history.past = [];
           state.history.future = [];
+          state.deleteRequested = false;
         } else {
           // Guardar en historial sólo si hubo cambios reales.
           if (patches.length > 0) {
@@ -330,6 +348,7 @@ export const useEditorStore = create<EditorState & EditorActions>()(
         state.selection = { refs: [] };
         state.history = { past: [], future: [] };
         state.autosaveStatus = "idle";
+        state.deleteRequested = false;
       });
     },
 
@@ -378,8 +397,9 @@ export const useEditorStore = create<EditorState & EditorActions>()(
     },
 
     resetSelection() {
-      // Alias semántico de clearSelection; delega para mantener un único punto de cambio.
-      get().clearSelection();
+      set((state) => {
+        state.selection = { refs: [] };
+      });
     },
 
     clearSelection() {
@@ -398,39 +418,16 @@ export const useEditorStore = create<EditorState & EditorActions>()(
       const { map, stageSize } = get();
       if (!map || stageSize.width === 0 || stageSize.height === 0) return;
 
-      const { rows, tables, areas } = map.entities;
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
+      const bbox = computeEntitiesBBox(map.entities);
 
-      const expand = (x: number, y: number, r = 0) => {
-        if (x - r < minX) minX = x - r;
-        if (y - r < minY) minY = y - r;
-        if (x + r > maxX) maxX = x + r;
-        if (y + r > maxY) maxY = y + r;
-      };
-
-      for (const row of Object.values(rows)) {
-        const pad = row.seatRadius + 8;
-        expand(row.start.x, row.start.y, pad);
-        expand(row.end.x, row.end.y, pad);
-      }
-      for (const table of Object.values(tables)) {
-        const pad = table.radius + table.seatRadius + 8;
-        expand(table.center.x, table.center.y, pad);
-      }
-      for (const area of Object.values(areas)) {
-        for (const pt of area.points) expand(pt.x, pt.y, 8);
-      }
-
-      if (!isFinite(minX)) {
+      if (bbox === null) {
         set((state) => {
           state.viewport = { zoom: 1, panX: 0, panY: 0 };
         });
         return;
       }
 
+      const { minX, minY, maxX, maxY } = bbox;
       const MARGIN = 48;
       const contentW = maxX - minX;
       const contentH = maxY - minY;
@@ -445,6 +442,20 @@ export const useEditorStore = create<EditorState & EditorActions>()(
       const panY = stageSize.height / 2 - cy * zoom;
       set((state) => {
         state.viewport = { zoom, panX, panY };
+      });
+    },
+
+    requestDelete() {
+      // Solo activar si hay selección activa
+      if (get().selection.refs.length === 0) return;
+      set((state) => {
+        state.deleteRequested = true;
+      });
+    },
+
+    cancelDelete() {
+      set((state) => {
+        state.deleteRequested = false;
       });
     },
   })),

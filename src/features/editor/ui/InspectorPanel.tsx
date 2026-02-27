@@ -1,33 +1,17 @@
 "use client";
 
-import { useState } from "react";
 import { useEditorStore } from "@store/editor.store";
 import {
   selectSelectionRefs,
   selectMap,
   selectHasSelection,
 } from "@store/selectors";
-import { ConfirmDialog } from "@features/editor/ui/ConfirmDialog";
-import { useToast } from "@features/editor/ui/Toast";
 
 export function InspectorPanel() {
   const map = useEditorStore(selectMap);
   const selected = useEditorStore(selectSelectionRefs);
   const hasSelection = useEditorStore(selectHasSelection);
-  const dispatch = useEditorStore((s) => s.dispatch);
-  const { toast } = useToast();
-
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-
-  function handleDeleteConfirm() {
-    setDeleteDialogOpen(false);
-    const count = selected.length;
-    dispatch({ type: "DELETE_ENTITIES", payload: { refs: selected } });
-    toast(
-      `${count.toString()} entidad${count !== 1 ? "es" : ""} eliminada${count !== 1 ? "s" : ""}`,
-      "info",
-    );
-  }
+  const requestDelete = useEditorStore((s) => s.requestDelete);
 
   return (
     <aside className="flex w-64 shrink-0 flex-col gap-3 overflow-y-auto border-l border-zinc-800 bg-zinc-900 p-4">
@@ -102,24 +86,13 @@ export function InspectorPanel() {
       {hasSelection && (
         <div className="mt-auto border-t border-zinc-800 pt-3">
           <button
-            onClick={() => setDeleteDialogOpen(true)}
+            onClick={() => requestDelete()}
             className="w-full rounded px-3 py-1.5 text-sm font-medium text-red-400 transition hover:bg-red-950 hover:text-red-300"
           >
             Eliminar selección ({selected.length})
           </button>
         </div>
       )}
-
-      {/* Diálogo confirmación de borrado */}
-      <ConfirmDialog
-        open={deleteDialogOpen}
-        title={`¿Eliminar ${selected.length.toString()} entidad${selected.length !== 1 ? "es" : ""}?`}
-        description="Esta acción no se puede deshacer desde el historial si el mapa ya fue guardado."
-        confirmLabel="Eliminar"
-        confirmVariant="danger"
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setDeleteDialogOpen(false)}
-      />
     </aside>
   );
 }

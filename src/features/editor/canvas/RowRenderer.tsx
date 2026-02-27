@@ -2,6 +2,7 @@
 
 import { memo } from "react";
 import { Circle, Group, Line, Text } from "react-konva";
+import type { KonvaEventObject } from "konva/lib/Node";
 import type { Row } from "@domain/model/seatmap";
 import { getRowSeatPosition } from "@domain/services/geometry";
 import { getRowSeatLabel } from "@domain/services/labeling";
@@ -20,6 +21,8 @@ interface RowRendererProps {
   row: Row;
   /** Si la fila está seleccionada, resalta con otro color. */
   selected?: boolean;
+  /** Callback invocado cuando el usuario hace clic sobre la fila. */
+  onClick?: (e: KonvaEventObject<MouseEvent>) => void;
 }
 
 /**
@@ -31,6 +34,7 @@ interface RowRendererProps {
 export const RowRenderer = memo(function RowRenderer({
   row,
   selected = false,
+  onClick,
 }: RowRendererProps) {
   const seatFill = selected ? "#4f46e5" : SEAT_FILL; // indigo-600 si seleccionado
   const seatStroke = selected ? "#818cf8" : SEAT_STROKE; // indigo-400
@@ -46,14 +50,23 @@ export const RowRenderer = memo(function RowRenderer({
   const labelOffset = row.seatRadius + 10;
 
   return (
-    <Group>
-      {/* Línea de la fila */}
+    <Group {...(onClick !== undefined ? { onClick } : {})}>
+      {/* Línea de la fila (visible, sin eventos) */}
       <Line
         points={[row.start.x, row.start.y, row.end.x, row.end.y]}
         stroke={ROW_LINE_COLOR}
         strokeWidth={1}
         dash={[4, 4]}
         listening={false}
+        perfectDrawEnabled={false}
+      />
+
+      {/* Zona de hit transparente sobre la línea completa de la fila */}
+      <Line
+        points={[row.start.x, row.start.y, row.end.x, row.end.y]}
+        stroke="transparent"
+        strokeWidth={row.seatRadius * 2 + 8}
+        hitStrokeWidth={row.seatRadius * 2 + 8}
         perfectDrawEnabled={false}
       />
 

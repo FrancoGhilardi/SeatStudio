@@ -1,12 +1,17 @@
 "use client";
 
+import { useCallback } from "react";
 import { useBootstrap } from "@store/useBootstrap";
 import { TopBar } from "@features/editor/ui/TopBar";
 import { LeftToolbar } from "@features/editor/ui/LeftToolbar";
 import { InspectorPanel } from "@features/editor/ui/InspectorPanel";
 import { CanvasStage } from "@features/editor/canvas/CanvasStage";
-import { ToastProvider } from "@features/editor/ui/Toast";
+import { ToastProvider, useToast } from "@features/editor/ui/Toast";
+import { ConfirmDialog } from "@features/editor/ui/ConfirmDialog";
 import { useKeyboardShortcuts } from "@features/editor/ui/useKeyboardShortcuts";
+import { useEditorStore } from "@store/editor.store";
+import { selectDeleteRequested, selectSelectionRefs } from "@store/selectors";
+import { pluralES } from "@shared/index";
 
 export function EditorShell() {
   const { status, error } = useBootstrap();
@@ -43,6 +48,19 @@ export function EditorShell() {
 function EditorLayout() {
   useKeyboardShortcuts();
 
+  const deleteRequested = useEditorStore(selectDeleteRequested);
+  const selectedRefs = useEditorStore(selectSelectionRefs);
+  const cancelDelete = useEditorStore((s) => s.cancelDelete);
+  const dispatch = useEditorStore((s) => s.dispatch);
+  const { toast } = useToast();
+
+  const handleDeleteConfirm = useCallback(() => {
+    const count = selectedRefs.length;
+    dispatch({ type: "DELETE_ENTITIES", payload: { refs: selectedRefs } });
+    cancelDelete();
+    toast(pluralES(count, "entidad eliminada", "entidades eliminadas"), "info");
+  }, [selectedRefs, dispatch, cancelDelete, toast]);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-zinc-950 text-zinc-100">
       {/* ── Barra superior ── */}
@@ -61,6 +79,17 @@ function EditorLayout() {
         {/* Panel inspector derecho */}
         <InspectorPanel />
       </div>
+
+      {/* Diálogo global de confirmación de borrado */}
+      <ConfirmDialog
+        open={deleteRequested}
+        title={`¿Eliminar ${selectedRefs.length.toString()} entidad${selectedRefs.length !== 1 ? "es" : ""}?`}
+        description={`Se eliminarán ${selectedRefs.length.toString()} entidad${selectedRefs.length !== 1 ? "es" : ""}. Podés deshacerlo con Ctrl+Z.`}
+        confirmLabel="Eliminar"
+        confirmVariant="danger"
+        onConfirm={handleDeleteConfirm}
+        onCancel={cancelDelete}
+      />
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Stage, Layer, Line, Rect, Group } from "react-konva";
+import { Stage, Layer, Line, Rect, Group, Circle } from "react-konva";
 import type Konva from "konva";
 import type { KonvaEventObject } from "konva/lib/Node";
 import { useShallow } from "zustand/react/shallow";
@@ -14,6 +14,16 @@ import {
   selectTool,
   selectViewport,
 } from "@store/selectors";
+import type { EntityRef, EntityKind } from "@domain/model/seatmap";
+import {
+  aabbIntersects,
+  rowBBox,
+  tableBBox,
+  areaBBox,
+} from "@domain/services/hitTest";
+import type { AABB } from "@domain/services/hitTest";
+import { TOOL_REGISTRY } from "@features/editor/tools";
+import type { DrawingState } from "@features/editor/tools";
 import { RowRenderer } from "./RowRenderer";
 import { TableRenderer } from "./TableRenderer";
 import { AreaRenderer } from "./AreaRenderer";
@@ -27,6 +37,8 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 8;
 /** Factor de escala por tick de rueda. */
 const ZOOM_SENSITIVITY = 1.08;
+/** Desplazamiento mínimo en px para considerar que el drag fue intencional. */
+const SEL_THRESHOLD = 5;
 
 function clamp(v: number, min: number, max: number) {
   return Math.max(min, Math.min(max, v));
@@ -99,6 +111,72 @@ const GridLines = memo(function GridLines({
   );
 });
 
+interface AreaPreviewProps {
+  points: readonly { x: number; y: number }[];
+  cursor: { x: number; y: number };
+}
+
+/**
+ * Vista previa del polígono en construcción (CreateAreaTool):
+ *  - Líneas entre vértices colocados.
+ *  - Línea desde último vértice hasta el cursor (punteada).
+ *  - Cierre tentativo cursor → primer vértice (si ≥ 2 vértices).
+ *  - Círculos en cada vértice.
+ */
+const AreaPreview = memo(function AreaPreview({
+  points,
+  cursor,
+}: AreaPreviewProps) {
+  const last = points[points.length - 1]!;
+  const first = points[0]!;
+  const flatPoints = points.flatMap((p) => [p.x, p.y]);
+
+  return (
+    <>
+      {points.length > 1 && (
+        <Line
+          points={flatPoints}
+          stroke="#6366f1"
+          strokeWidth={1.5}
+          closed={false}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+      <Line
+        points={[last.x, last.y, cursor.x, cursor.y]}
+        stroke="#6366f1"
+        strokeWidth={1}
+        dash={[5, 3]}
+        listening={false}
+        perfectDrawEnabled={false}
+      />
+      {points.length >= 2 && (
+        <Line
+          points={[cursor.x, cursor.y, first.x, first.y]}
+          stroke="#6366f1"
+          strokeWidth={1}
+          dash={[3, 4]}
+          opacity={0.4}
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      )}
+      {points.map((p) => (
+        <Circle
+          key={`${p.x}-${p.y}`}
+          x={p.x}
+          y={p.y}
+          radius={4}
+          fill="#818cf8"
+          listening={false}
+          perfectDrawEnabled={false}
+        />
+      ))}
+    </>
+  );
+});
+
 export function CanvasStage() {
   const tool = useEditorStore(selectTool);
   const viewport = useEditorStore(selectViewport);
@@ -126,6 +204,47 @@ export function CanvasStage() {
       new Set(selectionRefs.filter((r) => r.kind === "area").map((r) => r.id)),
     [selectionRefs],
   );
+
+  // ── acciones del store ──
+  const storeDispatch = useEditorStore((s) => s.dispatch);
+  const setSelection = useEditorStore((s) => s.setSelection);
+  const addToSelection = useEditorStore((s) => s.addToSelection);
+  const removeFromSelection = useEditorStore((s) => s.removeFromSelection);
+  const clearSelection = useEditorStore((s) => s.clearSelection);
+  const storeSetTool = useEditorStore((s) => s.setTool);
+
+  // ── estado de dibujo (transitorio, no es dominio) ──
+  const [drawingState, setDrawingState] = useState<DrawingState>({
+    kind: "idle",
+  });
+  // Resetear drawingState al cambiar de tool (p.ej. Escape → select)
+  useEffect(() => {
+    setDrawingState({ kind: "idle" });
+  }, [tool]);
+  /** Posición del cursor en coordenadas mundo; se actualiza en mousemove. */
+  const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
+  /** `true` si el puntero se movió significativamente desde el last mousedown (evita clicks fantasma tras pan). */
+  const didPan = useRef(false);
+
+  // ── estado del rectángulo de selección (marquee) ──
+  /** Coordenadas de pantalla del rectángulo de selección activo (`null` = ninguno). */
+  const [selectionRect, setSelectionRect] = useState<{
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null>(null);
+  /** Ref espejo del estado para lectura sin clausura obsoleta. */
+  const selectionRectRef = useRef<{
+    x1: number;
+    y1: number;
+    x2: number;
+    y2: number;
+  } | null>(null);
+  /** `true` mientras hay un arrastre de selección activo. */
+  const isSelecting = useRef(false);
+  /** Coordenadas de pantalla donde comenzó el arrastre de selección. */
+  const selectStartScreen = useRef({ x: 0, y: 0 });
 
   // ── Space key + estado de panning (para cursor dinámico) ──
   const [isSpaceDown, setIsSpaceDown] = useState(false);
@@ -215,6 +334,62 @@ export function CanvasStage() {
     [viewport, setViewport],
   );
 
+  // ── helpers de coordenadas ──
+  /** Convierte la posición actual del puntero (Stage) a coordenadas mundo. */
+  const getWorldPos = useCallback(() => {
+    const stage = stageRef.current;
+    if (!stage) return { x: 0, y: 0 };
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return { x: 0, y: 0 };
+    return {
+      x: (pointer.x - viewport.panX) / viewport.zoom,
+      y: (pointer.y - viewport.panY) / viewport.zoom,
+    };
+  }, [viewport.panX, viewport.panY, viewport.zoom]);
+
+  // ── constructor de ToolContext (fresco en cada evento) ──
+  const buildToolContext = useCallback(
+    (worldPos: { x: number; y: number }, isShift: boolean) => ({
+      worldPos,
+      isShift,
+      selectionRefs,
+      dispatch: storeDispatch,
+      setSelection,
+      toggleSelection: (ref: EntityRef) => {
+        // Leer estado fresco del store (no del closure) para evitar stale state
+        // en secuencias rápidas de shift+click.
+        const liveRefs = useEditorStore.getState().selection.refs;
+        const exists = liveRefs.some(
+          (r) => r.kind === ref.kind && r.id === ref.id,
+        );
+        if (exists) removeFromSelection([ref]);
+        else addToSelection([ref]);
+      },
+      clearSelection,
+      getEntityCount: (kind: EntityKind) => {
+        if (kind === "row") return rows.length;
+        if (kind === "table") return tables.length;
+        return areas.length;
+      },
+      drawingState,
+      setDrawingState,
+      setTool: storeSetTool,
+    }),
+    [
+      selectionRefs,
+      storeDispatch,
+      setSelection,
+      addToSelection,
+      removeFromSelection,
+      clearSelection,
+      rows.length,
+      tables.length,
+      areas.length,
+      drawingState,
+      storeSetTool,
+    ],
+  );
+
   // ── estado de pan por drag del fondo ──
   const isPanning = useRef(false);
   const panOrigin = useRef({ x: 0, y: 0 });
@@ -222,37 +397,188 @@ export function CanvasStage() {
 
   const handleBgMouseDown = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
-      // Pan: botón central siempre, o Espacio+clic izquierdo
       const isMiddle = e.evt.button === 1;
       const isSpacePan = e.evt.button === 0 && isSpaceDown;
-      if (!isMiddle && !isSpacePan) return;
+      didPan.current = false;
 
-      isPanning.current = true;
-      setIsPanningActive(true);
-      panOrigin.current = { x: e.evt.clientX, y: e.evt.clientY };
-      panStartVp.current = { panX: viewport.panX, panY: viewport.panY };
-      e.evt.preventDefault();
+      if (isMiddle || isSpacePan) {
+        // ─ pan ─
+        isPanning.current = true;
+        setIsPanningActive(true);
+        panOrigin.current = { x: e.evt.clientX, y: e.evt.clientY };
+        panStartVp.current = { panX: viewport.panX, panY: viewport.panY };
+        e.evt.preventDefault();
+        return;
+      }
+
+      // ─ rectángulo de selección: clic izquierdo en fondo vacío con SelectTool ─
+      if (
+        e.evt.button === 0 &&
+        !isSpaceDown &&
+        tool === "select" &&
+        e.target === stageRef.current
+      ) {
+        const pointer = stageRef.current.getPointerPosition();
+        if (pointer) {
+          isSelecting.current = true;
+          selectStartScreen.current = { x: pointer.x, y: pointer.y };
+          const r = {
+            x1: pointer.x,
+            y1: pointer.y,
+            x2: pointer.x,
+            y2: pointer.y,
+          };
+          selectionRectRef.current = r;
+          setSelectionRect(r);
+        }
+      }
     },
-    [isSpaceDown, viewport.panX, viewport.panY],
+    [isSpaceDown, viewport.panX, viewport.panY, tool],
   );
 
   const handleBgMouseMove = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
-      if (!isPanning.current) return;
-      const dx = e.evt.clientX - panOrigin.current.x;
-      const dy = e.evt.clientY - panOrigin.current.y;
-      setViewport({
-        panX: panStartVp.current.panX + dx,
-        panY: panStartVp.current.panY + dy,
-      });
+      // Actualizar posición del cursor en coordenadas mundo (para previews)
+      const stage = stageRef.current;
+      if (stage) {
+        const pointer = stage.getPointerPosition();
+        if (pointer) {
+          setPreviewPos({
+            x: (pointer.x - viewport.panX) / viewport.zoom,
+            y: (pointer.y - viewport.panY) / viewport.zoom,
+          });
+        }
+      }
+
+      if (isPanning.current) {
+        didPan.current = true;
+        const dx = e.evt.clientX - panOrigin.current.x;
+        const dy = e.evt.clientY - panOrigin.current.y;
+        setViewport({
+          panX: panStartVp.current.panX + dx,
+          panY: panStartVp.current.panY + dy,
+        });
+        return;
+      }
+
+      // Actualizar rectángulo de selección si hay un arrastre activo
+      if (isSelecting.current) {
+        const pointer = stageRef.current?.getPointerPosition();
+        if (pointer) {
+          const start = selectStartScreen.current;
+          const dx = pointer.x - start.x;
+          const dy = pointer.y - start.y;
+          // Si superó el umbral, marcar como arrastre (inhibe el click)
+          if (Math.abs(dx) > SEL_THRESHOLD || Math.abs(dy) > SEL_THRESHOLD) {
+            didPan.current = true;
+          }
+          const r = {
+            x1: start.x,
+            y1: start.y,
+            x2: pointer.x,
+            y2: pointer.y,
+          };
+          selectionRectRef.current = r;
+          setSelectionRect(r);
+        }
+      }
     },
-    [setViewport],
+    [setViewport, viewport.panX, viewport.panY, viewport.zoom],
   );
 
   const handleBgMouseUp = useCallback(() => {
-    isPanning.current = false;
-    setIsPanningActive(false);
-  }, []);
+    if (isPanning.current) {
+      isPanning.current = false;
+      setIsPanningActive(false);
+      return;
+    }
+
+    if (isSelecting.current) {
+      isSelecting.current = false;
+      const rect = selectionRectRef.current;
+      selectionRectRef.current = null;
+      setSelectionRect(null);
+
+      if (!rect) return;
+
+      const dx = Math.abs(rect.x2 - rect.x1);
+      const dy = Math.abs(rect.y2 - rect.y1);
+      // Rect demasiado pequeño: tratar como clic (ya gestionado por handleStageClick)
+      if (dx < SEL_THRESHOLD && dy < SEL_THRESHOLD) return;
+
+      // Convertir rect de pantalla a coordenadas mundo
+      const { panX, panY, zoom } = viewport;
+      const wMinX = (Math.min(rect.x1, rect.x2) - panX) / zoom;
+      const wMinY = (Math.min(rect.y1, rect.y2) - panY) / zoom;
+      const wMaxX = (Math.max(rect.x1, rect.x2) - panX) / zoom;
+      const wMaxY = (Math.max(rect.y1, rect.y2) - panY) / zoom;
+      const selAABB: AABB = {
+        minX: wMinX,
+        minY: wMinY,
+        maxX: wMaxX,
+        maxY: wMaxY,
+      };
+
+      // Hit-test contra todas las entidades del mapa
+      const newRefs: EntityRef[] = [];
+      for (const row of rows) {
+        if (aabbIntersects(rowBBox(row), selAABB)) {
+          newRefs.push({ kind: "row", id: row.id });
+        }
+      }
+      for (const table of tables) {
+        if (aabbIntersects(tableBBox(table), selAABB)) {
+          newRefs.push({ kind: "table", id: table.id });
+        }
+      }
+      for (const area of areas) {
+        if (aabbIntersects(areaBBox(area), selAABB)) {
+          newRefs.push({ kind: "area", id: area.id });
+        }
+      }
+
+      setSelection(newRefs);
+    }
+  }, [rows, tables, areas, viewport, setSelection]);
+
+  // ── clics delegados al tool activo ──
+  const handleStageClick = useCallback(
+    (e: KonvaEventObject<MouseEvent>) => {
+      // Solo procesar si el objetivo es el Stage (clic en fondo vacío)
+      if (e.target !== stageRef.current) return;
+      // Ignorar si fue un pan (arrastre)
+      if (didPan.current) return;
+
+      const worldPos = getWorldPos();
+      const ctx = buildToolContext(worldPos, e.evt.shiftKey);
+      TOOL_REGISTRY[tool].onBgClick(ctx, e);
+    },
+    [tool, buildToolContext, getWorldPos],
+  );
+
+  const handleStageDblClick = useCallback(
+    (e: KonvaEventObject<MouseEvent>) => {
+      if (e.target !== stageRef.current) return;
+
+      const worldPos = getWorldPos();
+      const ctx = buildToolContext(worldPos, e.evt.shiftKey);
+      const currentTool = TOOL_REGISTRY[tool];
+      currentTool.onBgDblClick?.(ctx, e);
+    },
+    [tool, buildToolContext, getWorldPos],
+  );
+
+  // ── handlers de clic sobre entidades ──
+  const handleEntityClick = useCallback(
+    (ref: EntityRef, e: KonvaEventObject<MouseEvent>) => {
+      // Detener propagación para que el Stage no procese el evento como BgClick
+      e.cancelBubble = true;
+      const worldPos = getWorldPos();
+      const ctx = buildToolContext(worldPos, e.evt.shiftKey);
+      TOOL_REGISTRY[tool].onEntityClick(ctx, ref, e);
+    },
+    [tool, buildToolContext, getWorldPos],
+  );
 
   const { zoom, panX, panY } = viewport;
 
@@ -279,6 +605,8 @@ export function CanvasStage() {
           onMouseDown={handleBgMouseDown}
           onMouseMove={handleBgMouseMove}
           onMouseUp={handleBgMouseUp}
+          onClick={handleStageClick}
+          onDblClick={handleStageDblClick}
         >
           {/* ── capa base: grilla + fondo ── */}
           <Layer listening={false}>
@@ -311,6 +639,9 @@ export function CanvasStage() {
                   key={area.id}
                   area={area}
                   selected={selectedAreaIds.has(area.id)}
+                  onClick={(e) =>
+                    handleEntityClick({ kind: "area", id: area.id }, e)
+                  }
                 />
               ))}
 
@@ -320,6 +651,9 @@ export function CanvasStage() {
                   key={row.id}
                   row={row}
                   selected={selectedRowIds.has(row.id)}
+                  onClick={(e) =>
+                    handleEntityClick({ kind: "row", id: row.id }, e)
+                  }
                 />
               ))}
 
@@ -329,9 +663,71 @@ export function CanvasStage() {
                   key={table.id}
                   table={table}
                   selected={selectedTableIds.has(table.id)}
+                  onClick={(e) =>
+                    handleEntityClick({ kind: "table", id: table.id }, e)
+                  }
                 />
               ))}
             </Group>
+          </Layer>
+
+          {/* ── capa de preview de dibujo en curso ── */}
+          <Layer listening={false}>
+            <Group x={panX} y={panY} scaleX={zoom} scaleY={zoom}>
+              {/* Preview de fila: punto de inicio + línea hacia cursor */}
+              {drawingState.kind === "rowFirstPoint" && (
+                <>
+                  <Circle
+                    x={drawingState.start.x}
+                    y={drawingState.start.y}
+                    radius={5}
+                    fill="#818cf8"
+                    listening={false}
+                    perfectDrawEnabled={false}
+                  />
+                  <Line
+                    points={[
+                      drawingState.start.x,
+                      drawingState.start.y,
+                      previewPos.x,
+                      previewPos.y,
+                    ]}
+                    stroke="#818cf8"
+                    strokeWidth={2}
+                    dash={[6, 4]}
+                    listening={false}
+                    perfectDrawEnabled={false}
+                  />
+                </>
+              )}
+
+              {/* Preview de área: polígono en construcción + línea hacia cursor */}
+              {drawingState.kind === "areaInProgress" &&
+                drawingState.points.length > 0 && (
+                  <AreaPreview
+                    points={drawingState.points}
+                    cursor={previewPos}
+                  />
+                )}
+            </Group>
+          </Layer>
+
+          {/* ── capa del rectángulo de selección (marquee) ── */}
+          <Layer listening={false}>
+            {selectionRect !== null && (
+              <Rect
+                x={Math.min(selectionRect.x1, selectionRect.x2)}
+                y={Math.min(selectionRect.y1, selectionRect.y2)}
+                width={Math.abs(selectionRect.x2 - selectionRect.x1)}
+                height={Math.abs(selectionRect.y2 - selectionRect.y1)}
+                fill="rgba(99,102,241,0.08)"
+                stroke="#818cf8"
+                strokeWidth={1}
+                dash={[4, 3]}
+                listening={false}
+                perfectDrawEnabled={false}
+              />
+            )}
           </Layer>
         </Stage>
       )}

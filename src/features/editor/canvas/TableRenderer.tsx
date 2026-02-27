@@ -2,6 +2,7 @@
 
 import { memo } from "react";
 import { Circle, Group, Text } from "react-konva";
+import type { KonvaEventObject } from "konva/lib/Node";
 import type { Table } from "@domain/model/seatmap";
 import { getTableSeatPosition } from "@domain/services/geometry";
 import { getTableSeatLabel } from "@domain/services/labeling";
@@ -19,6 +20,8 @@ const TABLE_LABEL_FONT_SIZE = 12;
 interface TableRendererProps {
   table: Table;
   selected?: boolean;
+  /** Callback invocado cuando el usuario hace clic sobre la mesa. */
+  onClick?: (e: KonvaEventObject<MouseEvent>) => void;
 }
 
 /**
@@ -30,6 +33,7 @@ interface TableRendererProps {
 export const TableRenderer = memo(function TableRenderer({
   table,
   selected = false,
+  onClick,
 }: TableRendererProps) {
   const tableFill = selected ? "#312e81" : TABLE_FILL; // indigo-950 si seleccionado
   const tableStroke = selected ? "#818cf8" : TABLE_STROKE; // indigo-400
@@ -37,8 +41,12 @@ export const TableRenderer = memo(function TableRenderer({
   const seatStroke = selected ? "#818cf8" : SEAT_STROKE;
 
   return (
-    <Group x={table.center.x} y={table.center.y}>
-      {/* Disco de la mesa */}
+    <Group
+      x={table.center.x}
+      y={table.center.y}
+      {...(onClick !== undefined ? { onClick } : {})}
+    >
+      {/* Disco de la mesa — actúa como zona de hit */}
       <Circle
         radius={table.radius}
         fill={tableFill}

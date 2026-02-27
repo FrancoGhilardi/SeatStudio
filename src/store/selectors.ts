@@ -163,6 +163,9 @@ export const selectCanUndo = (s: S): boolean => s.history.past.length > 0;
 /** `true` si hay acciones que rehacer. */
 export const selectCanRedo = (s: S): boolean => s.history.future.length > 0;
 
+/** `true` si hay una confirmaci\u00f3n de borrado pendiente. */
+export const selectDeleteRequested = (s: S): boolean => s.deleteRequested;
+
 export const selectAutosaveStatus = (s: S): AutosaveStatus => s.autosaveStatus;
 
 /** Dimensiones actuales de la Stage (width/height en px de pantalla). */

@@ -1,4 +1,5 @@
-import type { Point, Row, Table } from "@domain/model";
+import type { Point, Row, SeatMapEntities, Table } from "@domain/model";
+import type { AABB } from "./hitTest";
 
 // Utilidades geométricas
 
@@ -73,4 +74,46 @@ export function getTableSeatPosition(table: Table, index: number): Point {
     x: table.center.x + r * Math.cos(angle),
     y: table.center.y + r * Math.sin(angle),
   };
+}
+
+// Bounding-box de colección de entidades
+
+/**
+ * Calcula el bounding-box (AABB) que envuelve todas las entidades del mapa
+ * con un margen visual (`pad`) proporcional a su geometría.
+ *
+ * Retorna `null` si no hay ninguna entidad (mapa vacío).
+ *
+ * Centraliza este cálculo en dominio para no duplicar lógica en el store.
+ */
+export function computeEntitiesBBox(entities: SeatMapEntities): AABB | null {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+
+  const expand = (x: number, y: number, r = 0): void => {
+    if (x - r < minX) minX = x - r;
+    if (y - r < minY) minY = y - r;
+    if (x + r > maxX) maxX = x + r;
+    if (y + r > maxY) maxY = y + r;
+  };
+
+  const { rows, tables, areas } = entities;
+
+  for (const row of Object.values(rows)) {
+    const pad = row.seatRadius + 8;
+    expand(row.start.x, row.start.y, pad);
+    expand(row.end.x, row.end.y, pad);
+  }
+  for (const table of Object.values(tables)) {
+    const pad = table.radius + table.seatRadius + 8;
+    expand(table.center.x, table.center.y, pad);
+  }
+  for (const area of Object.values(areas)) {
+    for (const pt of area.points) expand(pt.x, pt.y, 8);
+  }
+
+  if (!isFinite(minX)) return null;
+  return { minX, minY, maxX, maxY };
 }

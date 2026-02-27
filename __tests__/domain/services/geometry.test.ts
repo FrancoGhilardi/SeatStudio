@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  computeEntitiesBBox,
   distance,
   getRowSeatPosition,
   getTableSeatPosition,
   midpoint,
   unitVector,
 } from "@domain/services/geometry";
-import { makeRow, makeTable } from "./fixtures";
+import { makeArea, makeRow, makeTable } from "./fixtures";
 
 describe("distance", () => {
   it("retorna 0 para puntos idénticos", () => {
@@ -171,5 +172,88 @@ describe("getTableSeatPosition", () => {
       const dy = pos.y - 150;
       expect(Math.sqrt(dx * dx + dy * dy)).toBeCloseTo(r);
     }
+  });
+});
+
+describe("computeEntitiesBBox", () => {
+  it("retorna null para mapa vacío", () => {
+    expect(computeEntitiesBBox({ rows: {}, tables: {}, areas: {} })).toBeNull();
+  });
+
+  it("incluye padding de seatRadius en filas", () => {
+    const row = makeRow({
+      start: { x: 0, y: 0 },
+      end: { x: 100, y: 0 },
+      seatRadius: 15,
+    });
+    const bbox = computeEntitiesBBox({
+      rows: { r: row },
+      tables: {},
+      areas: {},
+    });
+    expect(bbox).not.toBeNull();
+    // pad = seatRadius + 8 = 23
+    expect(bbox!.minX).toBeLessThanOrEqual(-23);
+    expect(bbox!.minY).toBeLessThanOrEqual(-23);
+    expect(bbox!.maxX).toBeGreaterThanOrEqual(123);
+  });
+
+  it("incluye padding de radius+seatRadius en mesas", () => {
+    const table = makeTable({
+      center: { x: 200, y: 200 },
+      radius: 60,
+      seatRadius: 12,
+    });
+    const bbox = computeEntitiesBBox({
+      rows: {},
+      tables: { t: table },
+      areas: {},
+    });
+    expect(bbox).not.toBeNull();
+    // pad = 60 + 12 + 8 = 80
+    expect(bbox!.minX).toBeCloseTo(200 - 80);
+    expect(bbox!.maxX).toBeCloseTo(200 + 80);
+  });
+
+  it("envuelve los vértices de las áreas con padding 8", () => {
+    const area = makeArea({
+      points: [
+        { x: 10, y: 10 },
+        { x: 90, y: 10 },
+        { x: 90, y: 90 },
+      ],
+    });
+    const bbox = computeEntitiesBBox({
+      rows: {},
+      tables: {},
+      areas: { a: area },
+    });
+    expect(bbox).not.toBeNull();
+    expect(bbox!.minX).toBeCloseTo(10 - 8);
+    expect(bbox!.minY).toBeCloseTo(10 - 8);
+    expect(bbox!.maxX).toBeCloseTo(90 + 8);
+    expect(bbox!.maxY).toBeCloseTo(90 + 8);
+  });
+
+  it("unifica entidades mixtas en un único bbox", () => {
+    const row = makeRow({
+      start: { x: -100, y: 0 },
+      end: { x: 0, y: 0 },
+      seatRadius: 5,
+    });
+    const table = makeTable({
+      center: { x: 500, y: 500 },
+      radius: 30,
+      seatRadius: 5,
+    });
+    const bbox = computeEntitiesBBox({
+      rows: { r: row },
+      tables: { t: table },
+      areas: {},
+    });
+    expect(bbox).not.toBeNull();
+    // lado izquierdo viene de la fila; lado derecho de la mesa
+    expect(bbox!.minX).toBeLessThan(0);
+    expect(bbox!.maxX).toBeGreaterThan(400);
   });
 });

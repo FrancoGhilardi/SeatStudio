@@ -2,6 +2,7 @@
 
 import { memo } from "react";
 import { Group, Line, Text } from "react-konva";
+import type { KonvaEventObject } from "konva/lib/Node";
 import type { Area } from "@domain/model/seatmap";
 
 const AREA_FILL = "rgba(99, 102, 241, 0.12)"; // indigo, semi-transparente
@@ -38,6 +39,8 @@ function toFlat(points: ReadonlyArray<{ x: number; y: number }>): number[] {
 interface AreaRendererProps {
   area: Area;
   selected?: boolean;
+  /** Callback invocado cuando el usuario hace clic sobre el área. */
+  onClick?: (e: KonvaEventObject<MouseEvent>) => void;
 }
 
 /**
@@ -49,6 +52,7 @@ interface AreaRendererProps {
 export const AreaRenderer = memo(function AreaRenderer({
   area,
   selected = false,
+  onClick,
 }: AreaRendererProps) {
   const fill = selected ? AREA_FILL_SELECTED : AREA_FILL;
   const stroke = selected ? AREA_STROKE_SELECTED : AREA_STROKE;
@@ -56,8 +60,8 @@ export const AreaRenderer = memo(function AreaRenderer({
   const center = centroid(area.points);
 
   return (
-    <Group>
-      {/* Polígono */}
+    <Group {...(onClick !== undefined ? { onClick } : {})}>
+      {/* Polígono — zona de hit + visual */}
       <Line
         points={flat}
         closed
