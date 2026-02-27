@@ -165,5 +165,9 @@ export const selectCanRedo = (s: S): boolean => s.history.future.length > 0;
 
 export const selectAutosaveStatus = (s: S): AutosaveStatus => s.autosaveStatus;
 
+/** Dimensiones actuales de la Stage (width/height en px de pantalla). */
+export const selectStageSize = (s: S): { width: number; height: number } =>
+  s.stageSize;
+
 /** Nombre del mapa activo o cadena vacía si no hay mapa. */
 export const selectMapName = (s: S): string => s.map?.meta.name ?? "";

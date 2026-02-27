@@ -15,7 +15,6 @@ import { useToast } from "@features/editor/ui/Toast";
 import { API_ROUTES } from "@shared/index";
 import type { AutosaveStatus } from "@store/editor.store";
 
-
 const SAVE_BADGE_CLS: Record<AutosaveStatus, string> = {
   idle: "text-zinc-500",
   pending: "text-amber-400",
@@ -171,6 +170,48 @@ function IconRedo() {
   );
 }
 
+function IconFit() {
+  return (
+    <svg
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-hidden="true"
+    >
+      {/* esquinas apuntando hacia adentro */}
+      <path
+        d="M1 5V1h4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M15 5V1h-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M1 11v4h4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M15 11v4h-4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function TopBar() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [newMapDialogOpen, setNewMapDialogOpen] = useState(false);
@@ -188,6 +229,7 @@ export function TopBar() {
   const undo = useEditorStore((s) => s.undo);
   const redo = useEditorStore((s) => s.redo);
   const setViewport = useEditorStore((s) => s.setViewport);
+  const fitViewport = useEditorStore((s) => s.fitViewport);
 
   function handleNew() {
     setNewMapDialogOpen(true);
@@ -266,7 +308,6 @@ export function TopBar() {
     toast("Mapa exportado", "success");
   }
 
-  // ── Zoom ───────────────────────────────────────────────────────────────
   function handleZoomIn() {
     setViewport({ zoom: Math.min(zoom * 1.25, 8) });
   }
@@ -275,6 +316,9 @@ export function TopBar() {
   }
   function handleZoomReset() {
     setViewport({ zoom: 1, panX: 0, panY: 0 });
+  }
+  function handleFitView() {
+    fitViewport();
   }
 
   return (
@@ -344,12 +388,18 @@ export function TopBar() {
         <button
           onClick={handleZoomReset}
           title="Restablecer zoom (100%)"
-          className="min-w-[4.5rem] rounded px-2 py-1 text-center text-xs tabular-nums text-zinc-300 transition hover:bg-zinc-700"
+          className="min-w-18 rounded px-2 py-1 text-center text-xs tabular-nums text-zinc-300 transition hover:bg-zinc-700"
         >
           {Math.round(zoom * 100)}%
         </button>
         <ToolbarButton onClick={handleZoomIn} title="Acercar">
           <span className="text-base leading-none">+</span>
+        </ToolbarButton>
+        <ToolbarButton
+          onClick={handleFitView}
+          title="Ajustar vista al contenido"
+        >
+          <IconFit />
         </ToolbarButton>
 
         {/* Spacer */}

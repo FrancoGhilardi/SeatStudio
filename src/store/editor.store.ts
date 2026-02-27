@@ -81,6 +81,8 @@ export interface EditorState {
   };
   /** Estado del guardado automático en background. */
   autosaveStatus: AutosaveStatus;
+  /** Dimensiones de la Stage de Konva en pantalla (actualizadas por CanvasStage). */
+  stageSize: { width: number; height: number };
 }
 
 export interface EditorActions {
@@ -137,6 +139,15 @@ export interface EditorActions {
 
   /** Vacía la selección. */
   clearSelection(): void;
+
+  /** Almacena las dimensiones del canvas; lo llama CanvasStage vía ResizeObserver. */
+  setStageSize(size: { width: number; height: number }): void;
+
+  /**
+   * Ajusta zoom y pan para que todas las entidades del mapa quepan en la Stage.
+   * Si el mapa está vacío o la Stage tiene tamaño cero, resetea al 100% centrado.
+   */
+  fitViewport(): void;
 }
 
 /**
@@ -183,6 +194,7 @@ const INITIAL_STATE: EditorState = {
   viewport: { zoom: 1, panX: 0, panY: 0 },
   history: { past: [], future: [] },
   autosaveStatus: "idle",
+  stageSize: { width: 0, height: 0 },
 };
 
 export const useEditorStore = create<EditorState & EditorActions>()(
@@ -373,6 +385,66 @@ export const useEditorStore = create<EditorState & EditorActions>()(
     clearSelection() {
       set((state) => {
         state.selection = { refs: [] };
+      });
+    },
+
+    setStageSize(size) {
+      set((state) => {
+        state.stageSize = size;
+      });
+    },
+
+    fitViewport() {
+      const { map, stageSize } = get();
+      if (!map || stageSize.width === 0 || stageSize.height === 0) return;
+
+      const { rows, tables, areas } = map.entities;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+
+      const expand = (x: number, y: number, r = 0) => {
+        if (x - r < minX) minX = x - r;
+        if (y - r < minY) minY = y - r;
+        if (x + r > maxX) maxX = x + r;
+        if (y + r > maxY) maxY = y + r;
+      };
+
+      for (const row of Object.values(rows)) {
+        const pad = row.seatRadius + 8;
+        expand(row.start.x, row.start.y, pad);
+        expand(row.end.x, row.end.y, pad);
+      }
+      for (const table of Object.values(tables)) {
+        const pad = table.radius + table.seatRadius + 8;
+        expand(table.center.x, table.center.y, pad);
+      }
+      for (const area of Object.values(areas)) {
+        for (const pt of area.points) expand(pt.x, pt.y, 8);
+      }
+
+      if (!isFinite(minX)) {
+        set((state) => {
+          state.viewport = { zoom: 1, panX: 0, panY: 0 };
+        });
+        return;
+      }
+
+      const MARGIN = 48;
+      const contentW = maxX - minX;
+      const contentH = maxY - minY;
+      const zoom = Math.min(
+        (stageSize.width - 2 * MARGIN) / contentW,
+        (stageSize.height - 2 * MARGIN) / contentH,
+        4,
+      );
+      const cx = (minX + maxX) / 2;
+      const cy = (minY + maxY) / 2;
+      const panX = stageSize.width / 2 - cx * zoom;
+      const panY = stageSize.height / 2 - cy * zoom;
+      set((state) => {
+        state.viewport = { zoom, panX, panY };
       });
     },
   })),
