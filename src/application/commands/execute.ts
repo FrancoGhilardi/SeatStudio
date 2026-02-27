@@ -7,6 +7,8 @@ import { importMap } from "@application/usecases/io";
 import { fail, failOne, ok, type Result } from "@domain/services/errors";
 import type {
   ApplyLabelRuleCommand,
+  BatchApplyLabelRuleCommand,
+  BatchSetEntityLabelsCommand,
   CreateAreaCommand,
   CreateRowCommand,
   CreateTableCommand,
@@ -86,6 +88,10 @@ export function executeCommand(
       return handleApplyLabelRule(cmd, map);
     case "DELETE_ENTITIES":
       return handleDeleteEntities(cmd, map);
+    case "BATCH_SET_ENTITY_LABELS":
+      return handleBatchSetEntityLabels(cmd, map);
+    case "BATCH_APPLY_LABEL_RULE":
+      return handleBatchApplyLabelRule(cmd, map);
     default: {
       // Exhaustiveness check: si se añade un nuevo comando al union EditorCommand
       // sin implementar su handler aquí, TypeScript fallará en compilación.
@@ -738,6 +744,76 @@ function handleApplyLabelRule(
       draftEntity.labeling = rule;
       // Limpiar overrides: la nueva regla aplica a todos los asientos
       draftEntity.seatOverrides = {};
+    }
+    touchUpdatedAt(draft);
+  });
+  return toResult(produced as readonly [SeatMap, Patch[], Patch[]]);
+}
+
+// BATCH_SET_ENTITY_LABELS
+
+function handleBatchSetEntityLabels(
+  cmd: BatchSetEntityLabelsCommand,
+  map: SeatMap,
+): Result<CommandResult> {
+  const { items } = cmd.payload;
+
+  // Validar todos los labels antes de mutar (fail-fast)
+  for (const { label, kind, id } of items) {
+    if (label.trim() === "") {
+      return failOne({
+        code: "CMD_ENTITY_LABEL_EMPTY",
+        message: `El label de la entidad "${kind}:${id}" no puede estar vacío.`,
+        path: "payload.items.label",
+      });
+    }
+  }
+
+  const produced = produceWithPatches(map, (draft) => {
+    for (const { kind, id, label } of items) {
+      const collection = ENTITY_COLLECTION[kind];
+      const col = draft.entities[collection] as Record<
+        string,
+        { label: string }
+      >;
+      const entity = col[id];
+      if (entity) entity.label = label;
+    }
+    touchUpdatedAt(draft);
+  });
+  return toResult(produced as readonly [SeatMap, Patch[], Patch[]]);
+}
+
+// BATCH_APPLY_LABEL_RULE
+
+function handleBatchApplyLabelRule(
+  cmd: BatchApplyLabelRuleCommand,
+  map: SeatMap,
+): Result<CommandResult> {
+  const { items } = cmd.payload;
+
+  // Validar todas las reglas antes de mutar (fail-fast)
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    if (!item) continue;
+    const err = validateLabelingRuleCmd(
+      item.rule.template,
+      item.rule.startIndex,
+      item.rule.pad,
+      `payload.items[${i}].rule`,
+    );
+    if (err !== null) return err;
+  }
+
+  const produced = produceWithPatches(map, (draft) => {
+    for (const { kind, id, rule } of items) {
+      const col = kind === "row" ? draft.entities.rows : draft.entities.tables;
+      const entity = col[id];
+      if (entity) {
+        entity.labeling = rule;
+        // Limpiar overrides: la nueva regla aplica a todos los asientos
+        entity.seatOverrides = {};
+      }
     }
     touchUpdatedAt(draft);
   });

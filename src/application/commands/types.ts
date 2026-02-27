@@ -149,6 +149,37 @@ export interface DeleteEntitiesCommand {
 }
 
 /**
+ * Aplica un label a múltiples entidades en una sola operación atómica.
+ * Genera una sola entrada en el historial de undo/redo.
+ */
+export interface BatchSetEntityLabelsCommand {
+  readonly type: "BATCH_SET_ENTITY_LABELS";
+  readonly payload: {
+    readonly items: ReadonlyArray<{
+      readonly kind: EntityKind;
+      readonly id: string;
+      readonly label: string;
+    }>;
+  };
+}
+
+/**
+ * Aplica una LabelingRule a múltiples filas o mesas en una sola operación atómica.
+ * Limpia todos los seatOverrides de cada entidad afectada.
+ * Genera una sola entrada en el historial de undo/redo.
+ */
+export interface BatchApplyLabelRuleCommand {
+  readonly type: "BATCH_APPLY_LABEL_RULE";
+  readonly payload: {
+    readonly items: ReadonlyArray<{
+      readonly kind: "row" | "table";
+      readonly id: string;
+      readonly rule: LabelingRule;
+    }>;
+  };
+}
+
+/**
  * Unión de todos los comandos del MVP.
  * Usar en `executeCommand(cmd: EditorCommand, map: SeatMap)`.
  */
@@ -167,7 +198,9 @@ export type EditorCommand =
   | SetEntityLabelCommand
   | SetSeatLabelOverrideCommand
   | ApplyLabelRuleCommand
-  | DeleteEntitiesCommand;
+  | DeleteEntitiesCommand
+  | BatchSetEntityLabelsCommand
+  | BatchApplyLabelRuleCommand;
 
 /** Extrae el `type` de cualquier EditorCommand. Útil para switches exhaustivos. */
 export type EditorCommandType = EditorCommand["type"];

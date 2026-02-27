@@ -275,10 +275,20 @@ export function TopBar() {
         return;
       }
 
-      toast("Mapa importado correctamente", "success");
+      // Persistencia inmediata: flush explícito al repo sin esperar el debounce
+      // del autosave. Garantiza que si el usuario cierra la pestaña antes de
+      // que el timer de 1.5s expire, el mapa importado ya quedó guardado en DB.
+      const saveRes = await fetch(API_ROUTES.seatmapActive, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: text,
+      });
+      if (!saveRes.ok) {
+        toast("Mapa importado pero no persistido (error al guardar)", "error");
+        return;
+      }
 
-      // El autosave del store ya persiste el mapa tras IMPORT_MAP.
-      // No se necesita un fetch manual extra aquí.
+      toast("Mapa importado correctamente", "success");
     } catch (err) {
       toast(`No se pudo importar: ${String(err)}`, "error");
     } finally {

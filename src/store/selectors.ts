@@ -1,5 +1,6 @@
 import type {
   Area,
+  CanvasSettings,
   EntityKind,
   EntityRef,
   Row,
@@ -19,6 +20,10 @@ type S = EditorState & EditorActions;
 
 /** Mapa activo o `null` si aún no se inicializó. */
 export const selectMap = (s: S): SeatMap | null => s.map;
+
+/** Configuración del canvas (grid, snap, tamaño). */
+export const selectCanvasSettings = (s: S): CanvasSettings | null =>
+  s.map?.canvas ?? null;
 
 /** `true` si el mapa ya está cargado. */
 export const selectIsReady = (s: S): boolean => s.map !== null;

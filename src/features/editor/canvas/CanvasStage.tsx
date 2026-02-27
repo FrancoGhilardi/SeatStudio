@@ -14,36 +14,22 @@ import {
   selectTool,
   selectViewport,
   selectSelectedSeat,
+  selectCanvasSettings,
 } from "@store/selectors";
 import type { EntityRef, EntityKind } from "@domain/model/seatmap";
-import {
-  aabbIntersects,
-  rowBBox,
-  tableBBox,
-  areaBBox,
-} from "@domain/services/hitTest";
-import type { AABB } from "@domain/services/hitTest";
 import { TOOL_REGISTRY } from "@features/editor/tools";
 import type { DrawingState } from "@features/editor/tools";
 import { RowRenderer } from "./RowRenderer";
 import { TableRenderer } from "./TableRenderer";
 import { AreaRenderer } from "./AreaRenderer";
-
-/** Tamaño de celda de la grilla en coordenadas mundo (px). */
-const GRID_SIZE = 40;
-/** Color de línea principal de la grilla. */
-const GRID_COLOR_MINOR = "#27272a"; // zinc-800
-/** Límites de zoom permitidos. */
-const MIN_ZOOM = 0.1;
-const MAX_ZOOM = 8;
-/** Factor de escala por tick de rueda. */
-const ZOOM_SENSITIVITY = 1.08;
-/** Desplazamiento mínimo en px para considerar que el drag fue intencional. */
-const SEL_THRESHOLD = 5;
-
-function clamp(v: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, v));
-}
+import { DEFAULT_GRID_SIZE, GRID_COLOR, DRAG_THRESHOLD } from "./constants";
+import {
+  useStageResize,
+  useSpaceKey,
+  useWheelZoom,
+  useCanvasPan,
+  useMarqueeSelection,
+} from "./hooks";
 
 interface GridLayerProps {
   /** Ancho de la Stage en pantalla. */
@@ -53,12 +39,17 @@ interface GridLayerProps {
   zoom: number;
   panX: number;
   panY: number;
+  /** Tamaño de celda en coordenadas mundo (leído de `map.canvas.grid.size`). */
+  gridSize: number;
 }
 
 /**
- * Renderiza una grilla de puntos/líneas en coordenadas mundo.
+ * Renderiza una grilla de líneas en coordenadas mundo.
  * Se dibuja en el layer base, **antes** del group de contenido.
- * Las líneas se alinean siempre a múltiplos de GRID_SIZE.
+ * Las líneas se alinean a múltiplos de `gridSize`.
+ *
+ * Los arrays de coordenadas se memorizan con `useMemo` para evitar
+ * re-allocations innecesarias en cada render durante pan/zoom.
  */
 const GridLines = memo(function GridLines({
   stageWidth,
@@ -66,6 +57,7 @@ const GridLines = memo(function GridLines({
   zoom,
   panX,
   panY,
+  gridSize,
 }: GridLayerProps) {
   // Transformamos las esquinas de la pantalla a coordenadas mundo
   const worldLeft = -panX / zoom;
@@ -73,18 +65,22 @@ const GridLines = memo(function GridLines({
   const worldRight = worldLeft + stageWidth / zoom;
   const worldBottom = worldTop + stageHeight / zoom;
 
-  const startX = Math.floor(worldLeft / GRID_SIZE) * GRID_SIZE;
-  const startY = Math.floor(worldTop / GRID_SIZE) * GRID_SIZE;
+  const startX = Math.floor(worldLeft / gridSize) * gridSize;
+  const startY = Math.floor(worldTop / gridSize) * gridSize;
 
-  const verticals: number[] = [];
-  for (let x = startX; x <= worldRight; x += GRID_SIZE) {
-    verticals.push(x);
-  }
+  // useMemo evita recrear los arrays en cada render del componente memo;
+  // solo se recalculan cuando cambian realmente los límites o el gridSize.
+  const verticals = useMemo(() => {
+    const arr: number[] = [];
+    for (let x = startX; x <= worldRight; x += gridSize) arr.push(x);
+    return arr;
+  }, [startX, worldRight, gridSize]);
 
-  const horizontals: number[] = [];
-  for (let y = startY; y <= worldBottom; y += GRID_SIZE) {
-    horizontals.push(y);
-  }
+  const horizontals = useMemo(() => {
+    const arr: number[] = [];
+    for (let y = startY; y <= worldBottom; y += gridSize) arr.push(y);
+    return arr;
+  }, [startY, worldBottom, gridSize]);
 
   return (
     <>
@@ -92,7 +88,7 @@ const GridLines = memo(function GridLines({
         <Line
           key={`v-${x}`}
           points={[x, worldTop, x, worldBottom]}
-          stroke={GRID_COLOR_MINOR}
+          stroke={GRID_COLOR}
           strokeWidth={1 / zoom}
           listening={false}
           perfectDrawEnabled={false}
@@ -102,7 +98,7 @@ const GridLines = memo(function GridLines({
         <Line
           key={`h-${y}`}
           points={[worldLeft, y, worldRight, y]}
-          stroke={GRID_COLOR_MINOR}
+          stroke={GRID_COLOR}
           strokeWidth={1 / zoom}
           listening={false}
           perfectDrawEnabled={false}
@@ -182,6 +178,8 @@ export function CanvasStage() {
   const tool = useEditorStore(selectTool);
   const viewport = useEditorStore(selectViewport);
   const setViewport = useEditorStore((s) => s.setViewport);
+  const gridSize =
+    useEditorStore(selectCanvasSettings)?.grid.size ?? DEFAULT_GRID_SIZE;
 
   // ── entidades ──
   const rows = useEditorStore(useShallow(selectRowList));
@@ -220,125 +218,49 @@ export function CanvasStage() {
   const [drawingState, setDrawingState] = useState<DrawingState>({
     kind: "idle",
   });
-  // Resetear drawingState al cambiar de tool (p.ej. Escape → select)
   useEffect(() => {
     setDrawingState({ kind: "idle" });
   }, [tool]);
-  /** Posición del cursor en coordenadas mundo; se actualiza en mousemove. */
+
   const [previewPos, setPreviewPos] = useState({ x: 0, y: 0 });
-  /** `true` si el puntero se movió significativamente desde el last mousedown (evita clicks fantasma tras pan). */
+
+  /**
+   * Ref compartido con los hooks de pan y marquee.
+   * Se pone a `true` en cuanto hay movimiento significativo para inhibir
+   * los handlers de click una vez que el usuario suelta el ratón.
+   */
   const didPan = useRef(false);
 
-  // ── estado del rectángulo de selección (marquee) ──
-  /** Coordenadas de pantalla del rectángulo de selección activo (`null` = ninguno). */
-  const [selectionRect, setSelectionRect] = useState<{
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-  } | null>(null);
-  /** Ref espejo del estado para lectura sin clausura obsoleta. */
-  const selectionRectRef = useRef<{
-    x1: number;
-    y1: number;
-    x2: number;
-    y2: number;
-  } | null>(null);
-  /** `true` mientras hay un arrastre de selección activo. */
-  const isSelecting = useRef(false);
-  /** Coordenadas de pantalla donde comenzó el arrastre de selección. */
-  const selectStartScreen = useRef({ x: 0, y: 0 });
-
-  // ── Space key + estado de panning (para cursor dinámico) ──
-  const [isSpaceDown, setIsSpaceDown] = useState(false);
-  const [isPanningActive, setIsPanningActive] = useState(false);
-
-  const containerRef = useRef<HTMLDivElement>(null);
+  // ── refs de la stage ──
   const stageRef = useRef<Konva.Stage>(null);
-  const setStageSize = useEditorStore((s) => s.setStageSize);
-  const [size, setSize] = useState({ width: 0, height: 0 });
 
-  // ── redimensionar Stage al contenedor ──
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-
-    const ro = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      setSize({ width, height });
-      setStageSize({ width, height });
-    });
-    ro.observe(el);
-    // inicializar con tamaño actual
-    setSize({ width: el.clientWidth, height: el.clientHeight });
-    setStageSize({ width: el.clientWidth, height: el.clientHeight });
-
-    return () => ro.disconnect();
-  }, []);
-
-  // ── Space key: cursor grab para pan ──
-  useEffect(() => {
-    const isEditable = (t: EventTarget | null): boolean => {
-      if (!(t instanceof HTMLElement)) return false;
-      return (
-        t.tagName === "INPUT" ||
-        t.tagName === "TEXTAREA" ||
-        t.tagName === "SELECT" ||
-        t.isContentEditable
-      );
-    };
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space" && !e.repeat && !isEditable(e.target)) {
-        e.preventDefault();
-        setIsSpaceDown(true);
-      }
-    };
-    const onKeyUp = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        setIsSpaceDown(false);
-        setIsPanningActive(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    window.addEventListener("keyup", onKeyUp);
-    return () => {
-      window.removeEventListener("keydown", onKeyDown);
-      window.removeEventListener("keyup", onKeyUp);
-    };
-  }, []);
-
-  // ── zoom centrado en el cursor (rueda) ──
-  const handleWheel = useCallback(
-    (e: KonvaEventObject<WheelEvent>) => {
-      e.evt.preventDefault();
-
-      const stage = stageRef.current;
-      if (!stage) return;
-
-      const pointer = stage.getPointerPosition();
-      if (!pointer) return;
-
-      const direction = e.evt.deltaY < 0 ? 1 : -1;
-      const factor = direction > 0 ? ZOOM_SENSITIVITY : 1 / ZOOM_SENSITIVITY;
-      const newZoom = clamp(viewport.zoom * factor, MIN_ZOOM, MAX_ZOOM);
-
-      // Ajustar pan para que el punto bajo el cursor no se mueva
-      const mousePointTo = {
-        x: (pointer.x - viewport.panX) / viewport.zoom,
-        y: (pointer.y - viewport.panY) / viewport.zoom,
-      };
-      const newPanX = pointer.x - mousePointTo.x * newZoom;
-      const newPanY = pointer.y - mousePointTo.y * newZoom;
-
-      setViewport({ zoom: newZoom, panX: newPanX, panY: newPanY });
-    },
-    [viewport, setViewport],
+  // ── hooks de comportamiento del canvas ──
+  const { containerRef, size } = useStageResize();
+  const isSpaceDown = useSpaceKey();
+  const handleWheel = useWheelZoom(stageRef, viewport, setViewport);
+  const {
+    isPanningActive,
+    onMouseDown: panDown,
+    onMouseMove: panMove,
+    onMouseUp: panUp,
+  } = useCanvasPan(viewport, setViewport, isSpaceDown, didPan);
+  const {
+    selectionRect,
+    onMouseDown: marqDown,
+    onMouseMove: marqMove,
+    onMouseUp: marqUp,
+  } = useMarqueeSelection(
+    stageRef,
+    viewport,
+    rows,
+    tables,
+    areas,
+    setSelection,
+    tool,
+    didPan,
   );
 
   // ── helpers de coordenadas ──
-  /** Convierte la posición actual del puntero (Stage) a coordenadas mundo. */
   const getWorldPos = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return { x: 0, y: 0 };
@@ -350,7 +272,7 @@ export function CanvasStage() {
     };
   }, [viewport.panX, viewport.panY, viewport.zoom]);
 
-  // ── constructor de ToolContext (fresco en cada evento) ──
+  // ── constructor de ToolContext ──
   const buildToolContext = useCallback(
     (worldPos: { x: number; y: number }, isShift: boolean) => ({
       worldPos,
@@ -359,8 +281,6 @@ export function CanvasStage() {
       dispatch: storeDispatch,
       setSelection,
       toggleSelection: (ref: EntityRef) => {
-        // Leer estado fresco del store (no del closure) para evitar stale state
-        // en secuencias rápidas de shift+click.
         const liveRefs = useEditorStore.getState().selection.refs;
         const exists = liveRefs.some(
           (r) => r.kind === ref.kind && r.id === ref.id,
@@ -393,55 +313,19 @@ export function CanvasStage() {
     ],
   );
 
-  // ── estado de pan por drag del fondo ──
-  const isPanning = useRef(false);
-  const panOrigin = useRef({ x: 0, y: 0 });
-  const panStartVp = useRef({ panX: 0, panY: 0 });
-
+  // ── handlers combinados de la Stage ──
   const handleBgMouseDown = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
-      const isMiddle = e.evt.button === 1;
-      const isSpacePan = e.evt.button === 0 && isSpaceDown;
       didPan.current = false;
-
-      if (isMiddle || isSpacePan) {
-        // ─ pan ─
-        isPanning.current = true;
-        setIsPanningActive(true);
-        panOrigin.current = { x: e.evt.clientX, y: e.evt.clientY };
-        panStartVp.current = { panX: viewport.panX, panY: viewport.panY };
-        e.evt.preventDefault();
-        return;
-      }
-
-      // ─ rectángulo de selección: clic izquierdo en fondo vacío con SelectTool ─
-      if (
-        e.evt.button === 0 &&
-        !isSpaceDown &&
-        tool === "select" &&
-        e.target === stageRef.current
-      ) {
-        const pointer = stageRef.current.getPointerPosition();
-        if (pointer) {
-          isSelecting.current = true;
-          selectStartScreen.current = { x: pointer.x, y: pointer.y };
-          const r = {
-            x1: pointer.x,
-            y1: pointer.y,
-            x2: pointer.x,
-            y2: pointer.y,
-          };
-          selectionRectRef.current = r;
-          setSelectionRect(r);
-        }
-      }
+      const consumed = panDown(e);
+      if (!consumed) marqDown(e);
     },
-    [isSpaceDown, viewport.panX, viewport.panY, tool],
+    [panDown, marqDown],
   );
 
   const handleBgMouseMove = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
-      // Actualizar posición del cursor en coordenadas mundo (para previews)
+      // Actualizar posición del cursor en coords mundo (previews de dibujo)
       const stage = stageRef.current;
       if (stage) {
         const pointer = stage.getPointerPosition();
@@ -452,106 +336,21 @@ export function CanvasStage() {
           });
         }
       }
-
-      if (isPanning.current) {
-        didPan.current = true;
-        const dx = e.evt.clientX - panOrigin.current.x;
-        const dy = e.evt.clientY - panOrigin.current.y;
-        setViewport({
-          panX: panStartVp.current.panX + dx,
-          panY: panStartVp.current.panY + dy,
-        });
-        return;
-      }
-
-      // Actualizar rectángulo de selección si hay un arrastre activo
-      if (isSelecting.current) {
-        const pointer = stageRef.current?.getPointerPosition();
-        if (pointer) {
-          const start = selectStartScreen.current;
-          const dx = pointer.x - start.x;
-          const dy = pointer.y - start.y;
-          // Si superó el umbral, marcar como arrastre (inhibe el click)
-          if (Math.abs(dx) > SEL_THRESHOLD || Math.abs(dy) > SEL_THRESHOLD) {
-            didPan.current = true;
-          }
-          const r = {
-            x1: start.x,
-            y1: start.y,
-            x2: pointer.x,
-            y2: pointer.y,
-          };
-          selectionRectRef.current = r;
-          setSelectionRect(r);
-        }
-      }
+      panMove(e);
+      marqMove(e);
     },
-    [setViewport, viewport.panX, viewport.panY, viewport.zoom],
+    [panMove, marqMove, viewport.panX, viewport.panY, viewport.zoom],
   );
 
   const handleBgMouseUp = useCallback(() => {
-    if (isPanning.current) {
-      isPanning.current = false;
-      setIsPanningActive(false);
-      return;
-    }
+    const consumed = panUp();
+    if (!consumed) marqUp();
+  }, [panUp, marqUp]);
 
-    if (isSelecting.current) {
-      isSelecting.current = false;
-      const rect = selectionRectRef.current;
-      selectionRectRef.current = null;
-      setSelectionRect(null);
-
-      if (!rect) return;
-
-      const dx = Math.abs(rect.x2 - rect.x1);
-      const dy = Math.abs(rect.y2 - rect.y1);
-      // Rect demasiado pequeño: tratar como clic (ya gestionado por handleStageClick)
-      if (dx < SEL_THRESHOLD && dy < SEL_THRESHOLD) return;
-
-      // Convertir rect de pantalla a coordenadas mundo
-      const { panX, panY, zoom } = viewport;
-      const wMinX = (Math.min(rect.x1, rect.x2) - panX) / zoom;
-      const wMinY = (Math.min(rect.y1, rect.y2) - panY) / zoom;
-      const wMaxX = (Math.max(rect.x1, rect.x2) - panX) / zoom;
-      const wMaxY = (Math.max(rect.y1, rect.y2) - panY) / zoom;
-      const selAABB: AABB = {
-        minX: wMinX,
-        minY: wMinY,
-        maxX: wMaxX,
-        maxY: wMaxY,
-      };
-
-      // Hit-test contra todas las entidades del mapa
-      const newRefs: EntityRef[] = [];
-      for (const row of rows) {
-        if (aabbIntersects(rowBBox(row), selAABB)) {
-          newRefs.push({ kind: "row", id: row.id });
-        }
-      }
-      for (const table of tables) {
-        if (aabbIntersects(tableBBox(table), selAABB)) {
-          newRefs.push({ kind: "table", id: table.id });
-        }
-      }
-      for (const area of areas) {
-        if (aabbIntersects(areaBBox(area), selAABB)) {
-          newRefs.push({ kind: "area", id: area.id });
-        }
-      }
-
-      setSelection(newRefs);
-    }
-  }, [rows, tables, areas, viewport, setSelection]);
-
-  // ── clics delegados al tool activo ──
   const handleStageClick = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
-      // Solo procesar si el objetivo es el Stage (clic en fondo vacío)
       if (e.target !== stageRef.current) return;
-      // Ignorar si fue un pan (arrastre)
       if (didPan.current) return;
-
       const worldPos = getWorldPos();
       const ctx = buildToolContext(worldPos, e.evt.shiftKey);
       TOOL_REGISTRY[tool].onBgClick(ctx, e);
@@ -562,19 +361,15 @@ export function CanvasStage() {
   const handleStageDblClick = useCallback(
     (e: KonvaEventObject<MouseEvent>) => {
       if (e.target !== stageRef.current) return;
-
       const worldPos = getWorldPos();
       const ctx = buildToolContext(worldPos, e.evt.shiftKey);
-      const currentTool = TOOL_REGISTRY[tool];
-      currentTool.onBgDblClick?.(ctx, e);
+      TOOL_REGISTRY[tool].onBgDblClick?.(ctx, e);
     },
     [tool, buildToolContext, getWorldPos],
   );
 
-  // ── handlers de clic sobre entidades ──
   const handleEntityClick = useCallback(
     (ref: EntityRef, e: KonvaEventObject<MouseEvent>) => {
-      // Detener propagación para que el Stage no procese el evento como BgClick
       e.cancelBubble = true;
       const worldPos = getWorldPos();
       const ctx = buildToolContext(worldPos, e.evt.shiftKey);
@@ -613,13 +408,12 @@ export function CanvasStage() {
         >
           {/* ── capa base: grilla + fondo ── */}
           <Layer listening={false}>
-            {/* fondo sólido para capturar eventos de wheel */}
             <Rect
               x={0}
               y={0}
               width={size.width}
               height={size.height}
-              fill="#09090b" /* zinc-950 */
+              fill="#09090b"
               listening={false}
             />
             <Group x={panX} y={panY} scaleX={zoom} scaleY={zoom}>
@@ -629,6 +423,7 @@ export function CanvasStage() {
                 zoom={zoom}
                 panX={panX}
                 panY={panY}
+                gridSize={gridSize}
               />
             </Group>
           </Layer>
@@ -636,7 +431,6 @@ export function CanvasStage() {
           {/* ── capa de entidades ── */}
           <Layer>
             <Group x={panX} y={panY} scaleX={zoom} scaleY={zoom}>
-              {/* Áreas primero (fondo) */}
               {areas.map((area) => (
                 <AreaRenderer
                   key={area.id}
@@ -648,7 +442,6 @@ export function CanvasStage() {
                 />
               ))}
 
-              {/* Filas */}
               {rows.map((row) => {
                 const rowIsSelected = selectedRowIds.has(row.id);
                 const rowSeatIdx =
@@ -681,7 +474,6 @@ export function CanvasStage() {
                 );
               })}
 
-              {/* Mesas */}
               {tables.map((table) => {
                 const tableIsSelected = selectedTableIds.has(table.id);
                 const tableSeatIdx =
@@ -719,7 +511,6 @@ export function CanvasStage() {
           {/* ── capa de preview de dibujo en curso ── */}
           <Layer listening={false}>
             <Group x={panX} y={panY} scaleX={zoom} scaleY={zoom}>
-              {/* Preview de fila: punto de inicio + línea hacia cursor */}
               {drawingState.kind === "rowFirstPoint" && (
                 <>
                   <Circle
@@ -746,7 +537,6 @@ export function CanvasStage() {
                 </>
               )}
 
-              {/* Preview de área: polígono en construcción + línea hacia cursor */}
               {drawingState.kind === "areaInProgress" &&
                 drawingState.points.length > 0 && (
                   <AreaPreview
